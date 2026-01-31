@@ -46,6 +46,7 @@ Suggested reading order in the Wiki:
 ## Autostart MAVProxy on Pi 5 boot (desktop)
 Use the helper script below to install a desktop autostart entry that launches a terminal and runs
 MAVProxy for quick visual confirmation of MAVLink traffic over UART.
+This has been validated against Ubuntu 24.04 LTS desktop defaults (GNOME).
 
 ```bash
 ./scripts/install-mavproxy-autostart.sh
@@ -61,7 +62,8 @@ Optional overrides (set in your shell profile or systemd user environment):
 ```bash
 export MAVPROXY_MASTER=/dev/ttyAMA0
 export MAVPROXY_BAUD=57600
-export MAVPROXY_EXTRA="--map"
+export MAVPROXY_EXTRA_ARGS="--map --aircraft test"
+export TERMINAL_EMULATOR=gnome-terminal
 ```
 
 ## Contributing / Updating the SOP

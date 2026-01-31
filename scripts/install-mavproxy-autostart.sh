@@ -28,5 +28,6 @@ Autostart installed.
 Optional overrides (set in your shell profile or systemd user environment):
   MAVPROXY_MASTER=/dev/ttyAMA0
   MAVPROXY_BAUD=57600
-  MAVPROXY_EXTRA="--map"
+  MAVPROXY_EXTRA_ARGS="--map --aircraft test"
+  TERMINAL_EMULATOR=gnome-terminal
 EONOTES
