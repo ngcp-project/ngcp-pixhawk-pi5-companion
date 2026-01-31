@@ -43,6 +43,27 @@ Suggested reading order in the Wiki:
 
 ---
 
+## Autostart MAVProxy on Pi 5 boot (desktop)
+Use the helper script below to install a desktop autostart entry that launches a terminal and runs
+MAVProxy for quick visual confirmation of MAVLink traffic over UART.
+
+```bash
+./scripts/install-mavproxy-autostart.sh
+```
+
+What it does:
+- Installs launch helpers in `~/.local/bin`:
+  - `ngcp-mavproxy-telemetry` (runs MAVProxy against `/dev/ttyAMA0` at 57600 baud)
+  - `ngcp-mavproxy-autostart` (opens a terminal and runs the command above)
+- Creates an autostart entry at `~/.config/autostart/ngcp-mavproxy.desktop`
+
+Optional overrides (set in your shell profile or systemd user environment):
+```bash
+export MAVPROXY_MASTER=/dev/ttyAMA0
+export MAVPROXY_BAUD=57600
+export MAVPROXY_EXTRA="--map"
+```
+
 ## Contributing / Updating the SOP
 If you improve a procedure or discover a new failure mode, please update the **Wiki page first** so future engineers don’t repeat the same debugging.
 
