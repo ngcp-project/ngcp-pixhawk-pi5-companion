@@ -57,7 +57,7 @@ This has been validated against Ubuntu 24.04 LTS desktop defaults (GNOME).
 
 What it does:
 - Installs launch helpers in `~/.local/bin`:
-  - `ngcp-mavproxy-telemetry` (runs MAVProxy against `/dev/ttyAMA0` at 57600 baud)
+  - `ngcp-mavproxy-telemetry` (runs MAVProxy and auto-detects a UART device, default baud 57600)
   - `ngcp-mavproxy-autostart` (opens a terminal and runs the command above)
 - Creates an autostart entry at `~/.config/autostart/ngcp-mavproxy.desktop`
 
@@ -67,17 +67,6 @@ export MAVPROXY_MASTER=/dev/ttyAMA0
 export MAVPROXY_BAUD=57600
 export MAVPROXY_EXTRA_ARGS="--map --aircraft test"
 export TERMINAL_EMULATOR=gnome-terminal
-```
-
-### Install MAVProxy on Ubuntu 24.04
-Ubuntu 24.04 does not ship a `mavproxy` package in the default repositories. Install via `pipx`
-or `pip` instead.
-
-```bash
-sudo apt update
-sudo apt install -y pipx
-pipx ensurepath
-pipx install MAVProxy
 ```
 
 ## Contributing / Updating the SOP
