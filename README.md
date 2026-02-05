@@ -15,16 +15,14 @@ Validate and operationalize **Pixhawk ↔ Pi 5 MAVLink over UART (TELEM2)**, the
 ---
 
 ## Documentation (Start Here)
-All step-by-step procedures and the validated “known-good” setup are maintained in the **GitHub Wiki**.
+The short summaries live in this repo, and the more detailed write-ups are mirrored for the
+**GitHub Wiki**. The `docs/wiki` folder contains Markdown intended for that wiki.
 
-➡️ **Go to the Wiki for the full guide, commands, and SOPs**  
-(Repo → **Wiki** tab)
-
-Suggested reading order in the Wiki:
-1. **UART MAVLink Validation (TELEM2 ↔ Pi 5)**  
-2. **Quick Reference / Golden Commands**  
-3. **Troubleshooting Decision Tree**  
-4. **Telemetry Routing to GCS (Serial → UDP/TCP)** *(next phase)*
+Suggested reading order:
+1. **MAVProxy Autostart (Pi 5 Desktop Validation)** (`docs/wiki/MAVProxy-Autostart.md`)  
+2. **UART MAVLink Validation (TELEM2 ↔ Pi 5)** *(planned)*  
+3. **Quick Reference / Golden Commands** *(planned)*  
+4. **Troubleshooting Decision Tree** *(planned)*
 
 ---
 
@@ -35,11 +33,16 @@ Suggested reading order in the Wiki:
 
 ---
 
-## Repo Layout (suggested)
-- `README.md` – overview + pointers to the Wiki (this file)
-- `docs/` – optional exported SOPs (if we later mirror wiki pages)
-- `scripts/` – helper scripts (byte sniffers, port checks, launch commands)
-- `configs/` – known-good config snippets (Pi boot config lines, systemd notes, etc.)
+## Repo Layout
+- `README.md` – overview + quickstart info (this file)
+- `docs/wiki/` – detailed pages intended for the GitHub Wiki
+- `scripts/` – helper scripts for MAVProxy validation and autostart
+
+### Script inventory
+- `scripts/install-mavproxy-autostart.sh` – installs the helpers into `~/.local/bin` and
+  creates the GNOME desktop autostart entry.
+- `scripts/ngcp-mavproxy-autostart.sh` – opens a terminal emulator and runs the telemetry helper.
+- `scripts/ngcp-mavproxy-telemetry.sh` – launches MAVProxy against the configured UART device.
 
 ---
 
@@ -67,6 +70,8 @@ export TERMINAL_EMULATOR=gnome-terminal
 ```
 
 ## Contributing / Updating the SOP
-If you improve a procedure or discover a new failure mode, please update the **Wiki page first** so future engineers don’t repeat the same debugging.
+If you improve a procedure or discover a new failure mode, please update the Markdown in
+`docs/wiki` and then mirror it to the GitHub Wiki so future engineers don’t repeat the same
+debugging.
 
 ---
