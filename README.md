@@ -54,7 +54,7 @@ This has been validated against Ubuntu 24.04 LTS desktop defaults (GNOME).
 
 What it does:
 - Installs launch helpers in `~/.local/bin`:
-  - `ngcp-mavproxy-telemetry` (runs MAVProxy against `/dev/ttyAMA0` at 57600 baud)
+  - `ngcp-mavproxy-telemetry` (runs MAVProxy and auto-detects a UART device, default baud 57600)
   - `ngcp-mavproxy-autostart` (opens a terminal and runs the command above)
 - Creates an autostart entry at `~/.config/autostart/ngcp-mavproxy.desktop`
 

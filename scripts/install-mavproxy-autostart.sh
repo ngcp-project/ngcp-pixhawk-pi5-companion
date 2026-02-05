@@ -26,6 +26,7 @@ Autostart installed.
 - Autostart entry: ~/.config/autostart/ngcp-mavproxy.desktop
 
 Optional overrides (set in your shell profile or systemd user environment):
+  # If unset, ngcp-mavproxy-telemetry auto-detects a common Pi UART path.
   MAVPROXY_MASTER=/dev/ttyAMA0
   MAVPROXY_BAUD=57600
   MAVPROXY_EXTRA_ARGS="--map --aircraft test"
