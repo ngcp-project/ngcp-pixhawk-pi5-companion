@@ -21,7 +21,16 @@ except ImportError as e:
 
 # Configuration
 MAVLINK_URI = 'udp:127.0.0.1:14550'
-XBEE_PORT = '/dev/ttyUSB0'  # Fixed to USB port
+
+import glob
+def get_xbee_port():
+    ports = glob.glob('/dev/ttyUSB*') + glob.glob('/dev/ttyACM*')
+    if not ports:
+        return '/dev/ttyUSB0'
+    ports.sort()
+    return ports[0]
+
+XBEE_PORT = get_xbee_port()  # Auto-detects USB port
 XBEE_BAUD = 115200
 
 # Setup Logging
