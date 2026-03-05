@@ -18,6 +18,10 @@ This repo is a **focused playbook + helper scripts** to validate and operational
 4. A terminal should open. MAVProxy will detect the vehicle, and the background translator daemon will begin streaming data to the GCS!
 
 ## Architecture & Integration
+
+![Data Pipeline Diagram](docs/data_pipeline_diagram.png)
+> *Note: This data pipeline overview was generated using Nano Banana Pro and is subject to change as the repository is updated.*
+
 The autostart script (`ngcp-mavproxy-telemetry.sh`) currently spins up two separate processes:
 1. **MAVProxy (`mavproxy.py`)**: Connects physically to the Pixhawk over `/dev/ttyAMA0` (Serial0) at 57600 baud. It broadcasts all incoming MAVLink frames locally to UDP port `14550`.
 2. **GCS Translator (`gcs_translator.py`)**: A Python daemon that listens to UDP `14550`. It extracts specific data (Lat, Lon, Alt, Speed, Pitch, Roll, Yaw, Battery), packs it into the GCS team's `Telemetry` struct, and transmits it via the XBee API out of an automatically-detected `/dev/ttyUSB*` port.
