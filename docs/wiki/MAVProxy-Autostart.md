@@ -1,78 +1,47 @@
-# MAVProxy Autostart (Pi 5 Desktop Validation)
+# Pi 5 Telemetry Pipeline Autostart 
 
-This page documents the helper scripts in this repository that open a terminal at desktop login and
-run MAVProxy for a quick, visual confirmation that MAVLink UART telemetry is flowing between the
-Pixhawk and the Raspberry Pi 5.
+This page documents how the Raspberry Pi 5 automatically bridges the **Pixhawk Flight Controller** to the **Ground Control Station (GCS) XBee Radio** immediately upon booting up.
 
-## What the scripts do
+## What happens on boot?
 
-There are two primary helpers:
+When the GNOME desktop session logs in, a desktop autostart entry triggers our main script suite. The pipeline flows like this:
 
-- `ngcp-mavproxy-telemetry` runs MAVProxy against the configured UART device and baud rate.
-- `ngcp-mavproxy-autostart` chooses a terminal emulator and launches the telemetry script.
+1. **Hardware Detection:** The script automatically finds the Pixhawk UART connection (e.g., `/dev/ttyAMA0`) and the XBee USB connection (e.g., `/dev/ttyUSB0`).
+2. **GCS Translator Daemon:** A background Python script (`gcs_translator.py`) launches, listening on local UDP port `14550`.
+3. **MAVProxy Ingestion:** `mavproxy.py` connects to the Pixhawk, pulling in MAVLink data at 57600 baud, and broadcasts it locally to that UDP port.
+4. **Translation & Transmission:** The Translator Daemon catches the MAVLink UDP data, converts it into the proprietary GCS `Telemetry` struct (68 bytes), and streams it out of the XBee radio.
 
-A third helper (`install-mavproxy-autostart.sh`) installs both scripts into `~/.local/bin` and
-creates the desktop autostart entry at `~/.config/autostart/ngcp-mavproxy.desktop`.
+*Note: A visible terminal emulator will open on the desktop displaying MAVProxy's heartbeat output so you can visually confirm the drone is connected.*
 
-## Installation (one-time)
+## Installation & Setup
 
-From the repo root:
+If setting up a fresh Pi 5, follow these steps:
 
+### 1. Install MAVProxy
+Ubuntu 24.04 requires `pipx` for safe Python package installation:
 ```bash
-./scripts/install-mavproxy-autostart.sh
-```
-
-This writes:
-
-- `~/.local/bin/ngcp-mavproxy-telemetry`
-- `~/.local/bin/ngcp-mavproxy-autostart`
-- `~/.config/autostart/ngcp-mavproxy.desktop`
-
-## Install MAVProxy (Ubuntu 24.04)
-
-Ubuntu 24.04 does not ship a `mavproxy` package in the default repositories. Use one of the
-Python-based installation methods below.
-
-### Recommended: pipx
-
-```bash
-sudo apt update
-sudo apt install -y pipx
+sudo apt update && sudo apt install -y pipx
 pipx ensurepath
 pipx install MAVProxy
 ```
 
-### Alternative: pip (user install)
-
+### 2. Install the Autostart Scripts
+From the repo root, run the installer:
 ```bash
-sudo apt update
-sudo apt install -y python3-pip
-pip3 install --user MAVProxy
+./scripts/install-mavproxy-autostart.sh
 ```
+*This installs the helper scripts into `~/.local/bin` and creates the `~/.config/autostart/ngcp-mavproxy.desktop` entry.*
 
-Ensure `~/.local/bin` is on your PATH if you use the pip method.
+### 3. Connect Hardware
+- Plug the **Pixhawk TELEM2** port into the Pi 5 GPIO UART pins (TX to RX, RX to TX, GND to GND).
+- Plug the **XBee Radio** into any available USB port.
 
-## How it runs on boot
+### 4. Reboot
+Simply reboot the Pi 5 and log into the desktop. The terminal will open, the daemon will start, and data will flow!
 
-- When the GNOME desktop session logs in, the autostart entry launches
-  `ngcp-mavproxy-autostart`.
-- The autostart helper opens a terminal and executes `ngcp-mavproxy-telemetry`.
-- MAVProxy prints live MAVLink output in that terminal window for visual confirmation.
+## Configuration Overrides
 
-## SSH usage (no GUI required)
-
-If you are SSH'ed into the Pi, you can run the telemetry helper directly for immediate
-feedback:
-
-```bash
-~/.local/bin/ngcp-mavproxy-telemetry
-```
-
-The GUI autostart only triggers when someone logs into the desktop session.
-
-## Configuration overrides
-
-Set any of these environment variables before running:
+If you need to force specific hardware ports, you can set these environment variables before running, or export them in your shell profile:
 
 ```bash
 export MAVPROXY_MASTER=/dev/ttyAMA0
@@ -81,14 +50,8 @@ export MAVPROXY_EXTRA_ARGS="--map --aircraft test"
 export TERMINAL_EMULATOR=gnome-terminal
 ```
 
-- `MAVPROXY_MASTER` and `MAVPROXY_BAUD` control the UART device and baud rate.
-- `MAVPROXY_EXTRA_ARGS` adds extra MAVProxy flags (space-separated).
-- `TERMINAL_EMULATOR` forces a specific terminal emulator.
-
 ## Troubleshooting
 
-- **"mavproxy.py not found"**: Install MAVProxy using pipx or pip as noted above.
-- **No terminal appears on boot**: Ensure a user logs into the GNOME desktop session and that
-  `~/.config/autostart/ngcp-mavproxy.desktop` exists.
-- **No MAVLink data**: Verify the Pixhawk UART wiring and parameters, and confirm the Pi UART
-  device is `/dev/ttyAMA0`.
+- **"pymavlink not installed"**: The translator daemon uses the MAVProxy virtual environment. Ensure MAVProxy was installed via `pipx` as instructed above.
+- **No MAVLink Data**: Verify the Pixhawk is configured correctly (`SERIAL2_PROTOCOL = 2`, `SERIAL2_BAUD = 57`).
+- **XBee Not Transmitting**: Ensure the XBee is using a USB interface (`/dev/ttyUSB*` or `/dev/ttyACM*`). Raw GPIO serial is not supported by the auto-detector. If no XBee is found, the daemon safely falls back into "Test Mode" and prints the hex payload to its own log.
