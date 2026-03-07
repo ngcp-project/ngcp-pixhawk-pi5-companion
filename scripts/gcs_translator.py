@@ -3,6 +3,9 @@ import sys
 import time
 import math
 import logging
+import json
+import struct
+import socket
 
 try:
     from pymavlink import mavutil
@@ -33,6 +36,61 @@ def get_xbee_port():
 XBEE_PORT = get_xbee_port()  # Auto-detects USB port
 XBEE_BAUD = 115200
 
+class MockXBee:
+    """Mock XBee interface using UDP for local bidirectional testing."""
+    def __init__(self, port=14551):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(('127.0.0.1', port))
+        self.sock.setblocking(False)
+        self.ser = True # Bypass none check
+
+    def retrieve_data(self):
+        try:
+            data, _ = self.sock.recvfrom(1024)
+            class MockFrame: pass
+            frame = MockFrame()
+            frame.data = data
+            return frame
+        except BlockingIOError:
+            return None
+
+    def transmit_data(self, payload, retrieveStatus=False):
+        pass
+
+def process_xbee_command(data, mav_connection, logger):
+    """Parses custom GCS frame bytes and converts back to MAVLink."""
+    if not data or not isinstance(data, bytes) or len(data) == 0:
+        return None
+        
+    PAYLOAD_ID = data[0]
+    if PAYLOAD_ID != 0x01: # 0x01 is the GCS TAG_COMMAND
+        return None
+
+    if len(data) >= 2:
+        COMMAND_ID = data[1]
+        
+        # Emergency Stop Command (ID: 3, Format: BBB)
+        if COMMAND_ID == 3 and len(data) >= 3:
+            status = data[2]
+            action = "ENABLE" if status == 0 else "DISABLE"
+            logger.info(f"Received EMERGENCY STOP command: {action}")
+            
+            # Send MAV_CMD_DO_FLIGHTTERMINATION (ID: 185) if Enabled
+            if status == 0:
+                logger.info("Sending Flight Termination to MAVLink!")
+                try:
+                    mav_connection.mav.command_long_send(
+                        mav_connection.target_system, mav_connection.target_component,
+                        mavutil.mavlink.MAV_CMD_DO_FLIGHTTERMINATION, 0,
+                        1.0, 0, 0, 0, 0, 0, 0
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send MAVLink command: {e}")
+            
+            return {"command": "EmergencyStop", "action": action, "timestamp": time.time()}
+            
+    return None
+
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('MAV_GCS_Translator')
@@ -54,12 +112,14 @@ def main():
         logger.info(f'XBee connected on {XBEE_PORT} at {XBEE_BAUD} baud.')
     except Exception as e:
         logger.warning(f'Could not connect XBee: {e}')
-        logger.warning('Proceeding in TEST MODE (Printing payload to console).')
+        logger.warning('Proceeding in TEST MODE (Starting UDP Mock on port 14551).')
+        xb = MockXBee(port=14551)
 
     # 3. Main Translation Loop
     telemetry = Telemetry()
     last_send_time = time.time()
     send_interval = 0.2  # 5 Hz
+    latest_command = None
 
     logger.info('Starting telemetry translation loop (5 Hz Target)...')
 
@@ -88,6 +148,14 @@ def main():
 
         current_time = time.time()
         
+        # Poll for Incoming XBee RX Frames
+        if xb:
+            frame = xb.retrieve_data()
+            if frame and hasattr(frame, 'data'):
+                cmd_event = process_xbee_command(frame.data, mav_connection, logger)
+                if cmd_event:
+                    latest_command = cmd_event
+        
         # Transmit at set frequency
         if current_time - last_send_time >= send_interval:
             telemetry.last_updated = int(current_time * 1000) # milliseconds
@@ -104,13 +172,34 @@ def main():
             # Pack payload using GCS repo code!
             try:
                 payload_bytes = telemetry.encode()
+                hex_str = ' '.join(f'{b:02x}' for b in payload_bytes)
                 
                 if xb and xb.ser:
                     xb.transmit_data(payload_bytes, retrieveStatus=False)
                 else:
                     # Debug print if no hardware
-                    hex_str = ' '.join(f'{b:02x}' for b in payload_bytes)
                     logger.info(f'NO XBEE -> Tlm Packet: [{len(payload_bytes)}B] {hex_str}')
+                
+                # Dump state for GUI
+                try:
+                    state_dump = {
+                        "lat": telemetry.current_latitude,
+                        "lon": telemetry.current_longitude,
+                        "alt": telemetry.altitude,
+                        "speed": telemetry.speed,
+                        "pitch": telemetry.pitch,
+                        "roll": telemetry.roll,
+                        "yaw": telemetry.yaw,
+                        "battery": telemetry.battery_life,
+                        "hex_payload": hex_str,
+                        "last_updated": telemetry.last_updated,
+                        "latest_command": latest_command
+                    }
+                    with open('/tmp/telemetry.json', 'w') as f:
+                        json.dump(state_dump, f)
+                except Exception as json_e:
+                    logger.error(f"Failed to write state JSON: {json_e}")
+
             except Exception as e:
                 logger.error(f'Encoding or Transmit error: {e}')
 

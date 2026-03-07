@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GCS Telemetry Monitor</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Telemetry <span>Monitor</span></h1>
+            <div id="status-indicator" class="status offline">OFFLINE</div>
+        </header>
+        
+        <main>
+            <div class="card panel-attitude">
+                <h2>Attitude</h2>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <span class="label">PITCH</span>
+                        <span class="value" id="val-pitch">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">ROLL</span>
+                        <span class="value" id="val-roll">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">YAW</span>
+                        <span class="value" id="val-yaw">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card panel-position">
+                <h2>Position</h2>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <span class="label">LATITUDE</span>
+                        <span class="value" id="val-lat">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">LONGITUDE</span>
+                        <span class="value" id="val-lon">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">ALT (ft)</span>
+                        <span class="value" id="val-alt">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">SPEED (ft/s)</span>
+                        <span class="value" id="val-speed">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card panel-system">
+                <h2>System Status</h2>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <span class="label">BATTERY (V)</span>
+                        <span class="value" id="val-battery">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">LAST UPDATE</span>
+                        <span class="value" id="val-updated">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card panel-raw">
+                <h2>Raw Hex Payload</h2>
+                <div class="raw-output" id="val-hex">WAITING FOR DATA...</div>
+            </div>
+
+            <div class="card panel-commands" id="panel-commands">
+                <h2>Incoming Commands Log</h2>
+                <div class="raw-output" id="val-cmd" style="color: var(--accent-red); font-weight: bold;">NO COMMANDS RECEIVED</div>
+            </div>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
