@@ -28,7 +28,11 @@ fi
 
 # Launch MAVProxy to pipe Serial -> UDP
 echo "Starting local MAVProxy link..."
-"${MAVPROXY_BIN}" --master="${MAVPROXY_MASTER}" --baudrate="${MAVPROXY_BAUD}" --out=udp:127.0.0.1:14550 --daemon ${MAVPROXY_EXTRA_ARGS} &
+"${MAVPROXY_BIN}" --master="${MAVPROXY_MASTER}" --baudrate="${MAVPROXY_BAUD}" \
+  --out=udp:127.0.0.1:14550 \
+  --out=udp:127.0.0.1:14601 \
+  --out=udp:127.0.0.1:14602 \
+  --daemon ${MAVPROXY_EXTRA_ARGS} &
 MAVPROXY_PID=$!
 
 
