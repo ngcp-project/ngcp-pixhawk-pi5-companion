@@ -45,5 +45,5 @@ python3 "${REPO_ROOT}/scripts/gui_server.py" &
 GUI_PID=$!
 
 echo "Opening GUI in Firefox..."
-firefox --new-window http://localhost:8082 &
+firefox --new-tab http://localhost:8082 &
 FIREFOX_PID=$!
