@@ -42,6 +42,8 @@ To bypass these restrictions and avoid having a roaming IP address on every rebo
 - To set it up, simply install Tailscale on both your development machine and the Pi 5, authenticate with the same account, and use the provided Tailscale IP in your SSH configuration.
 
 ## Documentation (start here)
+Readers, current users, and future users should refer to the dedicated GitHub wiki pages for this repo for more detailed information.
+
 Detailed SOPs live in `docs/wiki` (mirrors the GitHub Wiki).
 
 1. `docs/wiki/MAVProxy-Autostart.md`
