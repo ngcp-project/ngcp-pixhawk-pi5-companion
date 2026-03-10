@@ -34,6 +34,13 @@ To safely allow both the GCS and the Software Team's scripts to send commands to
 - **Offboard/Guided Mode:** Gives the Software Team's Autonomy Engine authority to autonomously navigate the drone.
 - **Loiter/Manual/RTL Mode:** Gives the GCS or RC operator absolute manual override authority, causing the flight controller to safely reject the Autonomy Engine's trajectory commands.
 
+## Optional: Tailscale VPN for Reliable SSH
+Due to the dynamic IP addressing (DHCP) on university networks and active blocking of local Multicast (mDNS), it can be difficult to reliably connect to the Raspberry Pi 5 companion computer over SSH (e.g. the IP changes every time it reconnects).
+To bypass these restrictions and avoid having a roaming IP address on every reboot, it is highly recommended to use **Tailscale**. Tailscale is a free, lightweight mesh VPN that assigns a permanent, static `100.x.x.x` IP address to the Pi 5.
+- It bypasses university NAT and firewall restrictions seamlessly by establishing secure peer-to-peer tunnels.
+- It allows you to SSH into the Pi 5 from anywhere (even off-campus) using the same IP address.
+- To set it up, simply install Tailscale on both your development machine and the Pi 5, authenticate with the same account, and use the provided Tailscale IP in your SSH configuration.
+
 ## Documentation (start here)
 Detailed SOPs live in `docs/wiki` (mirrors the GitHub Wiki).
 
