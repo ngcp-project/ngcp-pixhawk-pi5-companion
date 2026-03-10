@@ -47,3 +47,6 @@ GUI_PID=$!
 echo "Opening GUI in Firefox..."
 firefox --new-tab http://localhost:8082 &
 FIREFOX_PID=$!
+
+echo "All services started. Press Ctrl+C to terminate."
+wait
