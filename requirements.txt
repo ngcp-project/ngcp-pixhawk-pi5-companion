@@ -1,0 +1,27 @@
+# ============================================================
+# NGCP Pixhawk Pi 5 Companion – Python Dependencies
+# ============================================================
+#
+# IMPORTANT: This project uses the MAVProxy pipx-managed venv.
+# Do NOT install these packages into the system Python.
+#
+# Installation Instructions:
+#   1. Install MAVProxy via pipx (this also installs pymavlink):
+#      pipx install mavproxy
+#
+#   2. Inject any additional packages into that same venv:
+#      pipx inject mavproxy <package-name>
+#
+# External Repository Dependency (NOT pip-installable):
+#   The GCS translation pipeline depends on the gcs-infrastructure
+#   repository being cloned to: /home/ngcp25/gcs-infrastructure
+#   Modules used:
+#     - Packet.Telemetry.Telemetry
+#     - Communication.XBee.XBee
+#
+# ============================================================
+
+# Core MAVLink proxy and Python bindings
+# (pymavlink is installed automatically as a MAVProxy dependency)
+MAVProxy>=1.8.60
+pymavlink>=2.4.40
