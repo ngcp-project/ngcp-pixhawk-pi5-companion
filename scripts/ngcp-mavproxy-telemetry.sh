@@ -26,17 +26,29 @@ if [[ -z "${MAVPROXY_MASTER}" ]]; then
   fi
 fi
 
-# Launch MAVProxy to pipe Serial -> UDP
-echo "Starting local MAVProxy link..."
+# ── Step 1: Start MAVLink Hub (publish-subscribe broker) ─────────────────────
+# The hub receives all MAVProxy frames on port 14550 and fans them out to any
+# registered consumer script at runtime — no restart needed to add new scripts.
+echo "Starting MAVLink Hub broker..."
+python3 "${REPO_ROOT}/scripts/mavlink_hub.py" \
+  --in-port 14550 \
+  --reg-port 14555 &
+HUB_PID=$!
+
+# Give the hub a moment to bind its sockets before MAVProxy starts sending
+sleep 1
+
+# ── Step 2: Start MAVProxy → single output to hub ─────────────────────────────
+# Previously used 3 hardcoded --out ports; now uses 1 (the hub's input).
+# New consumer scripts self-register via register_with_hub() — no edits here.
+echo "Starting MAVProxy (output → hub on udp:127.0.0.1:14550)..."
 "${MAVPROXY_BIN}" --master="${MAVPROXY_MASTER}" --baudrate="${MAVPROXY_BAUD}" \
   --out=udp:127.0.0.1:14550 \
-  --out=udp:127.0.0.1:14601 \
-  --out=udp:127.0.0.1:14602 \
   --daemon ${MAVPROXY_EXTRA_ARGS} &
 MAVPROXY_PID=$!
 
-
-# Launch backend translation services
+# ── Step 3: Launch backend translation services ───────────────────────────────
+# gcs_translator.py calls register_with_hub() internally on startup.
 echo "Starting Telemetry Translator services..."
 "${REPO_ROOT}/scripts/gcs_translator.py" &
 TRANSLATOR_PID=$!
@@ -48,5 +60,6 @@ echo "Opening GUI in Firefox..."
 firefox --new-tab http://localhost:8082 &
 FIREFOX_PID=$!
 
-echo "All services started. Press Ctrl+C to terminate."
+echo "All services started (hub PID=${HUB_PID}, mavproxy PID=${MAVPROXY_PID})."
+echo "Press Ctrl+C to terminate."
 wait
