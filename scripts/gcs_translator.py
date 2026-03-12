@@ -49,7 +49,7 @@ class MockXBee:
             data, _ = self.sock.recvfrom(1024)
             class MockFrame: pass
             frame = MockFrame()
-            frame.data = data
+            frame.received_data = data  # Match real XBee library field name
             return frame
         except BlockingIOError:
             return None
@@ -69,8 +69,8 @@ def process_xbee_command(data, mav_connection, logger):
     if len(data) >= 2:
         COMMAND_ID = data[1]
         
-        # Emergency Stop Command (ID: 3, Format: BBB)
-        if COMMAND_ID == 3 and len(data) >= 3:
+        # Emergency Stop Command (ID: 2, Format: BBB) — per gcs-infrastructure README
+        if COMMAND_ID == 2 and len(data) >= 3:
             status = data[2]
             action = "ENABLE" if status == 0 else "DISABLE"
             logger.info(f"Received EMERGENCY STOP command: {action}")
@@ -151,8 +151,8 @@ def main():
         # Poll for Incoming XBee RX Frames
         if xb:
             frame = xb.retrieve_data()
-            if frame and hasattr(frame, 'data'):
-                cmd_event = process_xbee_command(frame.data, mav_connection, logger)
+            if frame and hasattr(frame, 'received_data'):  # matches real XBee lib & MockXBee
+                cmd_event = process_xbee_command(frame.received_data, mav_connection, logger)
                 if cmd_event:
                     latest_command = cmd_event
         

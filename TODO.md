@@ -2,63 +2,42 @@
 
 This file tracks pending compatibility fixes and planned feature work for the NGCP Pi 5 companion pipeline.
 
+> **Rollback Tag:** `working-xbee-2.4ghz-pre-gcs-infra-refactor` (commit `e458ee1`)  
+> Restore with: `git checkout working-xbee-2.4ghz-pre-gcs-infra-refactor -- scripts/gcs_translator.py`  
+> This tag captures the last known-good state with 2.4 GHz XBee hardware and live GUI telemetry confirmed.
+
 ---
 
 ## 🔴 HIGH PRIORITY — GCS Compatibility Fixes
 
 These issues were identified during a cross-repo audit on **2026-03-11** against the latest `ngcp-project/gcs-infrastructure` (commit `3d84531`).
 
-### 1. Fix EmergencyStop Command ID in `gcs_translator.py`
-**File:** `scripts/gcs_translator.py` — line 73  
-**Issue:** Our code treats Command ID `3` as EmergencyStop, but the `gcs-infrastructure` README specifies:
-- ID `1` = Heartbeat
-- ID `2` = Emergency Stop ← **correct ID**
-- ID `3` = Keep In Zone
-
-**Fix needed:**
-```python
-# WRONG (current):
-if COMMAND_ID == 3 and len(data) >= 3:
-
-# CORRECT:
-if COMMAND_ID == 2 and len(data) >= 3:
-```
+### ~~1. Fix EmergencyStop Command ID in `gcs_translator.py`~~ ✅ DONE
+**Fixed in commit after tag `working-xbee-2.4ghz-pre-gcs-infra-refactor`.**  
+Changed `COMMAND_ID == 3` → `COMMAND_ID == 2` to match gcs-infrastructure spec.
 
 ---
 
-### 2. Update Stale Import Paths in `gcs_translator.py`
+### 2. Update Stale Import Paths in `gcs_translator.py` — ⏸️ DEFERRED
 **File:** `scripts/gcs_translator.py` — lines 19–20  
-**Issue:** Our imports reference old module paths that no longer match the refactored `gcs-infrastructure` repo layout:
+**Status:** Deferred pending coordination with GCS Infrastructure subteam lead (Feniren / Aidan Sanders) to confirm expected integration pattern for the refactored `Application/Infrastructure/` layout.  
+**Risk:** Low until Pi 5 receives a `git pull` of `gcs-infrastructure` that removes the old `Packet/` and `Communication/XBee/` paths. Current fallback `try/except` in the script will print an import warning and exit — **monitor this when the Pi is next updated.**
+
+**Import change needed (do not apply until coordinated):**
 ```python
 # STALE (current):
 from Packet.Telemetry.Telemetry import Telemetry
 from Communication.XBee.XBee import XBee
+
+# TARGET (new gcs-infrastructure layout):
+from InfrastructureInterface import LaunchXBee, SendCommand, ReceiveTelemetry
 ```
-The repo was refactored. GCS now exposes everything through:
-```
-Application/Infrastructure/InfrastructureInterface.py
-  → LaunchXBee(PORT)
-  → SendCommand(Command, Vehicle)
-  → ReceiveTelemetry()
-```
-**Fix needed:** Update `sys.path.append` to point to `Application/Infrastructure/` and use the `InfrastructureInterface` API — coordinate with the GCS Infrastructure subteam lead (Feniren / Aidan Sanders) before changing to confirm the expected integration pattern.
 
 ---
 
-### 3. Fix XBee Frame Field Name Mismatch
-**File:** `scripts/gcs_translator.py` — line 154  
-**Issue:** Our code reads `frame.data` when processing real XBee frames, but `gcs-infrastructure`'s `GCSXBee.py` populates `Data.received_data` (not `.data`). Our mock works because `MockXBee` manually sets `.data`, but real hardware will silently drop all incoming commands.
-
-**Fix needed:**
-```python
-# WRONG (current — only works with MockXBee):
-if frame and hasattr(frame, 'data'):
-    cmd_event = process_xbee_command(frame.data, ...)
-
-# CORRECT (matches real XBee library):
-if frame and hasattr(frame, 'received_data'):
-    cmd_event = process_xbee_command(frame.received_data, ...)
-```
+### ~~3. Fix XBee Frame Field Name Mismatch~~ ✅ DONE
+**Fixed in commit after tag `working-xbee-2.4ghz-pre-gcs-infra-refactor`.**  
+Updated `MockXBee.retrieve_data()` to set `frame.received_data` and changed `hasattr` check from `'data'` → `'received_data'` throughout. Mock and real hardware now share the same interface.
 
 ---
 
