@@ -59,11 +59,29 @@ Detailed SOPs live in `docs/wiki` (mirrors the GitHub Wiki).
 - `scripts/ngcp-mavproxy-telemetry.sh` – launches MAVProxy (to UDP) and the Translator Daemon in the background.
 - `scripts/gcs_translator.py` – **[NEW]** The Python script bridging MAVLink and the external GCS radio.
 
+## Upcoming Features
+
+### 🔌 Automatic UDP Port Registration for External Scripts
+Currently, any new script that needs access to the live MAVLink stream must manually add a `--out udp:127.0.0.1:<PORT>` entry to the `ngcp-mavproxy-telemetry.sh` launch script and reboot. This creates friction for other subteams.
+
+A planned enhancement is a **dynamic UDP port manager** where external scripts can announce themselves at runtime. MAVProxy (or a lightweight multiplexer) would then automatically stand up a new output UDP stream for them — no launch script edits, no reboot required. The goal is a plug-and-play data bus so scripts from the Software, GCS, and Autonomy subteams can consume MAVLink data independently without stepping on each other.
+
+### 🖥️ Active UDP Port Monitor in the GUI
+The GCS Telemetry Monitor (`gui_server.py`) currently only displays live telemetry fields. A planned **"Port Monitor" panel** will be added to the web GUI that shows:
+- All active MAVLink UDP listeners on the Pi 5 (e.g., `14550 → gcs_translator.py`, `14601 → command_listener.py`)
+- Live heartbeat status per port (green = active, red = silent >5s)
+- A simple `/ports` REST endpoint on `gui_server.py` to serve this data
+
+This gives operators a real-time health overview of the entire data bus at a glance.
+
+> See [`TODO.md`](TODO.md) for a full backlog including pending GCS compatibility fixes.
+
 ## Status
 - ✅ UART device mapping confirmed on Pi 5 (`/dev/ttyAMA0`)
 - ✅ MAVLink frames observed on TELEM2
 - ✅ MAVProxy receives heartbeat + parameters
 - ✅ GCS Custom Translation Pipeline Implemented (MAVLink -> UDP -> Python -> XBee)
+- 🔧 GCS compatibility fixes pending (see [`TODO.md`](TODO.md))
 
 ## Contributing
 Update `docs/wiki` first, then mirror to the GitHub Wiki.
