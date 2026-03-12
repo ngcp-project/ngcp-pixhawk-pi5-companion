@@ -97,28 +97,10 @@ logger = logging.getLogger('MAV_GCS_Translator')
 
 def main():
     logger.info(f'Starting MAVLink to GCS Translator...')
-
-    # Register with the MAVLink Hub so this script appears in the Port Monitor GUI.
-    # Hub fans MAVProxy output on port 14550 down to all registered clients.
-    # Falls back silently if hub isn't running (direct MAVProxy connection still works).
-    HUB_UDP_PORT = 14600   # the port this script binds to receive MAVLink frames
-    try:
-        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-        from mavlink_hub import register_with_hub
-        registered = register_with_hub(HUB_UDP_PORT, 'gcs_translator.py')
-        if registered:
-            logger.info(f'Registered with MAVLink Hub on port {HUB_UDP_PORT}')
-            HUB_URI = f'udp:127.0.0.1:{HUB_UDP_PORT}'
-        else:
-            logger.warning('Hub registration failed — falling back to direct MAVProxy port 14550')
-            HUB_URI = MAVLINK_URI
-    except ImportError:
-        logger.warning('mavlink_hub not found — falling back to direct MAVProxy port 14550')
-        HUB_URI = MAVLINK_URI
     
-    # 1. Connect to MAVProxy (via hub if registered, direct fallback otherwise)
-    logger.info(f'Connecting to MAVLink stream on {HUB_URI}')
-    mav_connection = mavutil.mavlink_connection(HUB_URI)
+    # 1. Connect to MAVProxy
+    logger.info(f'Connecting to MAVLink stream on {MAVLINK_URI}')
+    mav_connection = mavutil.mavlink_connection(MAVLINK_URI)
     mav_connection.wait_heartbeat()
     logger.info(f'Heartbeat from system (system {mav_connection.target_system} component {mav_connection.target_component})')
 

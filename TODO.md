@@ -43,23 +43,21 @@ Updated `MockXBee.retrieve_data()` to set `frame.received_data` and changed `has
 
 ## 🟡 MEDIUM PRIORITY — Planned Features
 
-### 4. Automatic UDP Port Registration for External Scripts
-**Context:** The MAVProxy pipeline currently has pre-configured static output ports (`14550`, `14601`, `14602`). Future scripts from the Software Team or other subteams should not need to manually edit the launch script to add a new UDP output.
+### 4. Automatic UDP Port Registration for External Scripts — ⏸️ DEFERRED
+**Status:** Deferred pending coordination with the **Software Team and Autonomy Team** (2026-03-11).  
+**Reason:** Switching from hardcoded ports to a hub-based model changes how all external scripts receive MAVLink data. Activating this without prior notice would silently break `command_listener.py` (port 14601) and the Autonomy Engine (port 14602).  
+**Code Status:** `scripts/mavlink_hub.py` is written and tested (7-unit test suite passes), but is **not wired into the launch script**. No changes are active in production.
 
-**Planned Feature:** A dynamic UDP port manager that:
-- Listens for scripts announcing themselves (e.g., via a local socket or config file)
-- Calls `mavproxy.py --out udp:127.0.0.1:<PORT>` dynamically or manages a multiplexer
-- See `README.md` → **Upcoming Features** section for more context
+**Before activating:**
+- Coordinate with Software/Autonomy leads to agree on the migration timeline
+- Ensure all consumer scripts are updated to call `register_with_hub()` before switching the launch script
+- Reference the design in `scripts/mavlink_hub.py` and `scripts/test_mavlink_hub.py`
 
 ---
 
-### 5. GUI Panel Showing Active UDP Ports in `gui_server.py`
-**Context:** The GCS Telemetry Monitor (`gui_server.py`) currently only shows telemetry data. There is no visibility into which UDP ports are currently active and receiving MAVLink data.
-
-**Planned Feature:** A "Port Monitor" panel within the existing web GUI (`web/index.html`) that:
-- Queries a new `/ports` endpoint from `gui_server.py`
-- Displays a live list of active UDP listeners (e.g., `14550 → gcs_translator.py`, `14601 → command_listener.py`)
-- Highlights any port that has gone silent (no heartbeat in >5s)
+### 5. GUI Panel Showing Active UDP Ports in `gui_server.py` — ⏸️ DEFERRED
+**Status:** Deferred — depends on TODO #4 (hub activation). Deferred for the same reason.  
+**Code Status:** Port Monitor panel is implemented in the web GUI (`web/index.html`, `web/app.js`, `web/style.css`) and `gui_server.py` has a `/ports` endpoint. Both currently render **mock data** gracefully when the hub is not running. No functional regression.
 
 ---
 
