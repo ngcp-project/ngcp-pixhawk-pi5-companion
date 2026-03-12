@@ -9,3 +9,8 @@ scripts/raspi5ssh.pub
 # External communication scripts
 command_listener.py
 ground_sender.py
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
