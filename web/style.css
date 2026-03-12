@@ -174,3 +174,104 @@ h2 {
 .flash-red {
     animation: flashRed 1s ease-out;
 }
+
+/* ── Port Monitor Panel ─────────────────────────────────────────────────────── */
+.panel-ports h2::before { content: "🔌"; }
+
+.panel-ports {
+    grid-column: 1 / -1;  /* full width */
+}
+
+#port-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.port-row {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 0.7rem 1rem;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 10px;
+    border: 1px solid var(--card-border);
+    transition: border-color 0.3s ease;
+}
+
+.port-row:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Status dot */
+.port-status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--text-muted);
+}
+
+.port-row.alive .port-status-dot {
+    background: var(--accent-green);
+    box-shadow: 0 0 8px rgba(63, 185, 80, 0.6);
+    animation: pulse-green 2s ease-in-out infinite;
+}
+
+.port-row.dead .port-status-dot {
+    background: var(--accent-red);
+    box-shadow: 0 0 6px rgba(248, 81, 73, 0.4);
+}
+
+.port-row.pending .port-status-dot {
+    background: var(--accent-orange);
+}
+
+/* Port number badge */
+.port-badge {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.8rem;
+    font-weight: 700;
+    background: rgba(88, 166, 255, 0.1);
+    color: var(--accent-blue);
+    border: 1px solid rgba(88, 166, 255, 0.2);
+    border-radius: 6px;
+    padding: 0.15rem 0.5rem;
+    white-space: nowrap;
+}
+
+.port-name {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    font-family: 'Courier New', Courier, monospace;
+    flex: 1;
+}
+
+.port-frames {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.port-state-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.port-row.alive  .port-state-label { color: var(--accent-green); }
+.port-row.dead   .port-state-label { color: var(--accent-red);   }
+.port-row.pending .port-state-label { color: var(--accent-orange); }
+
+.port-placeholder {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-style: italic;
+}
+
+@keyframes pulse-green {
+    0%, 100% { box-shadow: 0 0 4px rgba(63, 185, 80, 0.3); }
+    50%       { box-shadow: 0 0 12px rgba(63, 185, 80, 0.8); }
+}

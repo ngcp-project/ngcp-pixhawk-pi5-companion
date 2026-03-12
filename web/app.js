@@ -80,6 +80,61 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Start polling loop
+    // ── Port Monitor ─────────────────────────────────────────────────────────
+    async function fetchPorts() {
+        try {
+            const response = await fetch('/ports');
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            renderPorts(data.clients || {});
+        } catch (err) {
+            const list = document.getElementById('port-list');
+            list.innerHTML = `<div class="port-row port-placeholder">
+                <span class="port-status-dot"></span>
+                <span class="port-name">Hub offline — no active ports</span>
+            </div>`;
+        }
+    }
+
+    function renderPorts(clients) {
+        const list = document.getElementById('port-list');
+
+        if (Object.keys(clients).length === 0) {
+            list.innerHTML = `<div class="port-row port-placeholder">
+                <span class="port-status-dot"></span>
+                <span class="port-name">No clients registered with hub</span>
+            </div>`;
+            return;
+        }
+
+        list.innerHTML = Object.entries(clients)
+            .sort(([a], [b]) => parseInt(a) - parseInt(b))
+            .map(([port, info]) => {
+                let stateClass, stateLabel;
+                if (info.alive === null || info.alive === undefined) {
+                    stateClass = 'pending'; stateLabel = 'Pending';
+                } else if (info.alive) {
+                    stateClass = 'alive';   stateLabel = 'Active';
+                } else {
+                    stateClass = 'dead';    stateLabel = 'Silent';
+                }
+
+                const frames = (info.frames_sent !== undefined)
+                    ? `${info.frames_sent.toLocaleString()} frames`
+                    : '';
+
+                return `<div class="port-row ${stateClass}">
+                    <span class="port-status-dot"></span>
+                    <span class="port-badge">${port}</span>
+                    <span class="port-name">${info.name || 'unknown'}</span>
+                    <span class="port-frames">${frames}</span>
+                    <span class="port-state-label">${stateLabel}</span>
+                </div>`;
+            }).join('');
+    }
+
+    // Start polling loops
     setInterval(fetchTelemetry, fetchIntervalMs);
+    setInterval(fetchPorts, 2000);
+    fetchPorts(); // immediate first call
 });

@@ -78,6 +78,16 @@
                 <h2>Incoming Commands Log</h2>
                 <div class="raw-output" id="val-cmd" style="color: var(--accent-red); font-weight: bold;">NO COMMANDS RECEIVED</div>
             </div>
+
+            <div class="card panel-ports" id="panel-ports">
+                <h2>MAVLink Port Monitor</h2>
+                <div id="port-list">
+                    <div class="port-row port-placeholder">
+                        <span class="port-status-dot"></span>
+                        <span class="port-name">Connecting to hub…</span>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
     <script src="app.js"></script>
