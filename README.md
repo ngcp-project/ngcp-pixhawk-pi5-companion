@@ -22,12 +22,13 @@ This repo is a **focused playbook + helper scripts** to validate and operational
 ![Data Pipeline Diagram](docs/data_pipeline_diagram.png)
 > *Note: This data pipeline overview was generated using Nano Banana Pro and is subject to change as the repository is updated.*
 
-The autostart script (`ngcp-mavproxy-telemetry.sh`) currently spins up the following MAVLink routing pipeline:
-1. **MAVProxy (`mavproxy.py`)**: Connects physically to the Pixhawk over `/dev/ttyAMA0` (Serial0) at 57600 baud. It broadcasts all incoming MAVLink frames locally to three dedicated UDP ports:
-   - `14550`: GCS Translator Daemon
-   - `14601`: Pre-configured for the Software Team's `command_listener.py`
-   - `14602`: Pre-configured for the Software Team's future Autonomy Engine (e.g., KrakenSDR integration)
-2. **GCS Translator (`gcs_translator.py`)**: A Python daemon that listens to UDP `14550`. It extracts specific data (Lat, Lon, Alt, Speed, Pitch, Roll, Yaw, Battery), packs it into the GCS team's `Telemetry` struct, and transmits it via the XBee API out of an automatically-detected `/dev/ttyUSB*` port.
+The autostart script (`ngcp-mavproxy-telemetry.sh`) spins up the following MAVLink routing pipeline:
+1. **MAVLink Hub (`mavlink_hub.py`)**: Starts first. Receives all MAVProxy frames on UDP `14550` and fans them out to every registered consumer script at runtime.
+2. **MAVProxy (`mavproxy.py`)**: Connects to the Pixhawk over `/dev/ttyAMA0` at 57600 baud. Outputs **only to the hub** (`udp:127.0.0.1:14550`) — no more hardcoded consumer ports.
+3. **GCS Translator (`gcs_translator.py`)**: Self-registers with the hub on port `14600` at startup. Extracts MAVLink data (Lat, Lon, Alt, Speed, Pitch, Roll, Yaw, Battery), packs it into the GCS team's `Telemetry` struct, and transmits via XBee.
+
+> [!IMPORTANT]
+> **Software Team / Autonomy Team:** The previous static ports `14601` and `14602` no longer receive data directly. Your scripts must self-register with the hub to receive MAVLink frames. See **[`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md)** for the 4-line fix and port assignments table.
 
 ### Dual-Control Arbitration (GCS vs. Autonomy)
 To safely allow both the GCS and the Software Team's scripts to send commands to the flight controller without collision, control authority is managed via standard flight modes:
@@ -56,8 +57,10 @@ Detailed SOPs live in `docs/wiki` (mirrors the GitHub Wiki).
 ### Script inventory
 - `scripts/install-mavproxy-autostart.sh` – installs helpers into `~/.local/bin` and creates a GNOME desktop autostart entry.
 - `scripts/ngcp-mavproxy-autostart.sh` – opens a terminal emulator and runs the telemetry helper.
-- `scripts/ngcp-mavproxy-telemetry.sh` – launches MAVProxy (to UDP) and the Translator Daemon in the background.
-- `scripts/gcs_translator.py` – **[NEW]** The Python script bridging MAVLink and the external GCS radio.
+- `scripts/ngcp-mavproxy-telemetry.sh` – launches Hub → MAVProxy → Translator Daemon in sequence.
+- `scripts/gcs_translator.py` – MAVLink → GCS packet translator; self-registers with hub on startup.
+- `scripts/mavlink_hub.py` – **[NEW]** Publish-subscribe MAVLink broker. Fan-out to all registered consumers.
+- `scripts/test_mavlink_hub.py` – **[NEW]** 7-test unit suite for the hub (run locally, no hardware needed).
 
 ## Upcoming Features
 
