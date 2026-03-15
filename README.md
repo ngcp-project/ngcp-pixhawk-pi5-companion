@@ -23,8 +23,9 @@ This repo is a **focused playbook + helper scripts** to validate and operational
 > *Note: This data pipeline overview was generated using Nano Banana Pro and is subject to change as the repository is updated.*
 
 The autostart script (`ngcp-mavproxy-telemetry.sh`) currently spins up the following MAVLink routing pipeline:
-1. **MAVProxy (`mavproxy.py`)**: Connects physically to the Pixhawk over `/dev/ttyAMA0` (Serial0) at 57600 baud. It broadcasts all incoming MAVLink frames locally to three dedicated UDP ports:
+1. **MAVProxy (`mavproxy.py`)**: Connects physically to the Pixhawk over `/dev/ttyAMA0` (Serial0) at 57600 baud. It broadcasts all incoming MAVLink frames locally to four dedicated UDP ports:
    - `14550`: GCS Translator Daemon
+   - `14540`: Pre-configured for the Software Team's **MAVSDK** autonomy scripts
    - `14601`: Pre-configured for the Software Team's `command_listener.py`
    - `14602`: Pre-configured for the Software Team's future Autonomy Engine (e.g., KrakenSDR integration)
 2. **GCS Translator (`gcs_translator.py`)**: A Python daemon that listens to UDP `14550`. It extracts specific data (Lat, Lon, Alt, Speed, Pitch, Roll, Yaw, Battery), packs it into the GCS team's `Telemetry` struct, and transmits it via the XBee API out of an automatically-detected `/dev/ttyUSB*` port.

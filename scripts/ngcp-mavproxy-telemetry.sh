@@ -30,6 +30,7 @@ fi
 echo "Starting local MAVProxy link..."
 "${MAVPROXY_BIN}" --master="${MAVPROXY_MASTER}" --baudrate="${MAVPROXY_BAUD}" \
   --out=udp:127.0.0.1:14550 \
+  --out=udp:127.0.0.1:14540 \
   --out=udp:127.0.0.1:14601 \
   --out=udp:127.0.0.1:14602 \
   --out=udp:127.0.0.1:14603 \
