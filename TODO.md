@@ -33,6 +33,8 @@ from Communication.XBee.XBee import XBee
 from InfrastructureInterface import LaunchXBee, SendCommand, ReceiveTelemetry
 ```
 
+**Partial improvement applied (2026-03-15):** `gcs_translator.py` now tries the new `InfrastructureInterface` path first and falls back to the old layout with a clear diagnostic warning. The full migration (removing the old fallback) still requires team coordination.
+
 ---
 
 ### ~~3. Fix XBee Frame Field Name Mismatch~~ ✅ DONE
@@ -70,3 +72,6 @@ Updated `MockXBee.retrieve_data()` to set `frame.received_data` and changed `has
 - [x] `wait` added to autostart script to prevent early process kill
 - [x] Tailscale VPN documented in README
 - [x] `gcs_translator.py` marked executable via git file mode
+- [x] **Import fallback updated** — `gcs_translator.py` now tries `InfrastructureInterface` path first, falls back to legacy paths with clear diagnostic output (2026-03-15)
+- [x] **Heartbeat command handling added** — `process_xbee_command()` now handles Command ID 1 (Heartbeat) consistent with `VehicleXBee.py` in gcs-infrastructure (2026-03-15)
+- [x] **Dynamic `vehicle_status`** — mapped from `HEARTBEAT.system_status` (MAV_STATE_ACTIVE=1, all others=0) instead of hardcoded `1` (2026-03-15)

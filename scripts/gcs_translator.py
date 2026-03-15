@@ -13,14 +13,26 @@ except ImportError:
     print('pymavlink not installed. Run: pip install pymavlink')
     sys.exit(1)
 
-# Import GCS Modules directly from the other repository
+# Import GCS Modules from the companion gcs-infrastructure repo.
+# Tries the new InfrastructureInterface path first (gcs-infrastructure >= 2026-03 refactor),
+# then falls back to the old Packet/Communication layout for backward compatibility.
+# See TODO.md #2 for the tracked migration plan.
 sys.path.append('/home/ngcp25/gcs-infrastructure')
+_using_new_interface = False
 try:
-    from Packet.Telemetry.Telemetry import Telemetry
-    from Communication.XBee.XBee import XBee
-except ImportError as e:
-    print(f'Failed to import GCS modules: {e}')
-    sys.exit(1)
+    from InfrastructureInterface import LaunchVehicleXBee, SendTelemetry, ReceiveCommand
+    from Telemetry.Telemetry import Telemetry
+    _using_new_interface = True
+    print('[gcs_translator] Using new InfrastructureInterface API.')
+except ImportError:
+    try:
+        from Packet.Telemetry.Telemetry import Telemetry
+        from Communication.XBee.XBee import XBee
+        print('[gcs_translator] WARNING: Using legacy import paths (old Packet/Communication layout).')
+        print('[gcs_translator] Update gcs-infrastructure on the Pi when coordinated with GCS team.')
+    except ImportError as e:
+        print(f'[gcs_translator] FATAL: Failed to import GCS modules via both paths: {e}')
+        sys.exit(1)
 
 # Configuration
 MAVLINK_URI = 'udp:127.0.0.1:14550'
@@ -58,23 +70,37 @@ class MockXBee:
         pass
 
 def process_xbee_command(data, mav_connection, logger):
-    """Parses custom GCS frame bytes and converts back to MAVLink."""
+    """Parses custom GCS frame bytes and converts back to MAVLink.
+
+    Command IDs match VehicleXBee.py in gcs-infrastructure:
+      1 = Heartbeat
+      2 = EmergencyStop  (Format: BBB — PAYLOAD_ID, COMMAND_ID, status)
+      3 = KeepIn         (not yet handled here)
+      4 = KeepOut        (not yet handled here)
+      5 = PatientLocation (not yet handled here)
+      6 = SearchArea      (not yet handled here)
+    """
     if not data or not isinstance(data, bytes) or len(data) == 0:
         return None
-        
+
     PAYLOAD_ID = data[0]
-    if PAYLOAD_ID != 0x01: # 0x01 is the GCS TAG_COMMAND
+    if PAYLOAD_ID != 0x01:  # 0x01 is the GCS TAG_COMMAND
         return None
 
     if len(data) >= 2:
         COMMAND_ID = data[1]
-        
-        # Emergency Stop Command (ID: 2, Format: BBB) — per gcs-infrastructure README
+
+        # Heartbeat Command (ID: 1) — GCS keepalive
+        if COMMAND_ID == 1:
+            logger.info("Received HEARTBEAT command from GCS")
+            return {"command": "Heartbeat", "timestamp": time.time()}
+
+        # Emergency Stop Command (ID: 2, Format: BBB) — per gcs-infrastructure spec
         if COMMAND_ID == 2 and len(data) >= 3:
             status = data[2]
             action = "ENABLE" if status == 0 else "DISABLE"
             logger.info(f"Received EMERGENCY STOP command: {action}")
-            
+
             # Send MAV_CMD_DO_FLIGHTTERMINATION (ID: 185) if Enabled
             if status == 0:
                 logger.info("Sending Flight Termination to MAVLink!")
@@ -86,9 +112,9 @@ def process_xbee_command(data, mav_connection, logger):
                     )
                 except Exception as e:
                     logger.error(f"Failed to send MAVLink command: {e}")
-            
+
             return {"command": "EmergencyStop", "action": action, "timestamp": time.time()}
-            
+
     return None
 
 # Setup Logging
@@ -129,22 +155,29 @@ def main():
         
         if msg:
             msg_type = msg.get_type()
-            
+
             # Map MAVLink data to GCS Telemetry struct
             if msg_type == 'GLOBAL_POSITION_INT':
                 telemetry.current_latitude = msg.lat / 1e7
                 telemetry.current_longitude = msg.lon / 1e7
-                telemetry.altitude = msg.alt / 1000.0 * 3.28084 # mm to feet
+                telemetry.altitude = msg.alt / 1000.0 * 3.28084  # mm to feet
             elif msg_type == 'VFR_HUD':
-                telemetry.speed = msg.groundspeed * 3.28084 # m/s to ft/s
+                telemetry.speed = msg.groundspeed * 3.28084  # m/s to ft/s
             elif msg_type == 'ATTITUDE':
                 telemetry.pitch = math.degrees(msg.pitch)
                 telemetry.roll = math.degrees(msg.roll)
                 telemetry.yaw = math.degrees(msg.yaw)
             elif msg_type == 'SYS_STATUS':
-                # Convert mV to Battery Voltage (Assuming Battery 0)
+                # Convert mV to Battery Voltage
                 if hasattr(msg, 'voltage_battery'):
-                     telemetry.battery_life = msg.voltage_battery / 1000.0
+                    telemetry.battery_life = msg.voltage_battery / 1000.0
+            elif msg_type == 'HEARTBEAT':
+                # Map MAVLink system_status to GCS vehicle_status field.
+                # MAV_STATE: 0=UNINIT, 1=BOOT, 2=CALIBRATING, 3=STANDBY,
+                #            4=ACTIVE, 5=CRITICAL, 6=EMERGENCY, 7=POWEROFF
+                # We map 4=ACTIVE → 1 (nominal), all others → 0 (not ready).
+                mav_state = getattr(msg, 'system_status', 0)
+                telemetry.vehicle_status = 1 if mav_state == 4 else 0
 
         current_time = time.time()
         
@@ -161,12 +194,11 @@ def main():
             telemetry.last_updated = int(current_time * 1000) # milliseconds
             
             # --- DEFAULT GCS FIELDS ---
-            # TODO (Future Implementation): These fields lack native MAVLink equivalents.
-            # - patient_status: Needs to be ingested from the external patient monitoring system
-            # - message_flag: Represents GCS operational intent (0=No Message, 1=Package Location, 2=Patient Location)
-            #                 Currently hardcoded to 0. MAVLink does not natively track Package/Patient status.
-            telemetry.vehicle_status = 1  
-            telemetry.message_flag = 0    
+            # vehicle_status is now updated live from HEARTBEAT.system_status above.
+            # patient_status: Needs to be ingested from an external patient monitoring system.
+            # message_flag: GCS operational intent (0=No Message, 1=Package Location, 2=Patient Location).
+            #               Hardcoded to 0 — MAVLink has no native equivalent.
+            telemetry.message_flag = 0
             telemetry.patient_status = 0
             
             # Pack payload using GCS repo code!
