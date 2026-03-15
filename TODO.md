@@ -18,22 +18,14 @@ Changed `COMMAND_ID == 3` → `COMMAND_ID == 2` to match gcs-infrastructure spec
 
 ---
 
-### 2. Update Stale Import Paths in `gcs_translator.py` — ⏸️ DEFERRED
-**File:** `scripts/gcs_translator.py` — lines 19–20  
-**Status:** Deferred pending coordination with GCS Infrastructure subteam lead (Feniren / Aidan Sanders) to confirm expected integration pattern for the refactored `Application/Infrastructure/` layout.  
-**Risk:** Low until Pi 5 receives a `git pull` of `gcs-infrastructure` that removes the old `Packet/` and `Communication/XBee/` paths. Current fallback `try/except` in the script will print an import warning and exit — **monitor this when the Pi is next updated.**
-
-**Import change needed (do not apply until coordinated):**
-```python
-# STALE (current):
-from Packet.Telemetry.Telemetry import Telemetry
-from Communication.XBee.XBee import XBee
-
-# TARGET (new gcs-infrastructure layout):
-from InfrastructureInterface import LaunchXBee, SendCommand, ReceiveTelemetry
-```
-
-**Partial improvement applied (2026-03-15):** `gcs_translator.py` now tries the new `InfrastructureInterface` path first and falls back to the old layout with a clear diagnostic warning. The full migration (removing the old fallback) still requires team coordination.
+### ~~2. Update Stale Import Paths in `gcs_translator.py`~~ ✅ DONE (2026-03-15)
+**Completed after go-ahead from GCS Infrastructure subteam.**  
+Legacy `Packet.Telemetry.Telemetry` and `Communication.XBee.XBee` imports fully removed.  
+`gcs_translator.py` now uses `InfrastructureInterface` exclusively:  
+- `LaunchVehicleXBee(PORT)` replaces direct `XBee(port, baudrate)` construction  
+- `SendTelemetry(telemetry)` replaces `xb.transmit_data()`  
+- `ReceiveCommand()` runs in a background daemon thread (non-blocking for main loop)  
+MockXBee fallback retained for test mode when hardware is absent.
 
 ---
 
@@ -72,6 +64,6 @@ Updated `MockXBee.retrieve_data()` to set `frame.received_data` and changed `has
 - [x] `wait` added to autostart script to prevent early process kill
 - [x] Tailscale VPN documented in README
 - [x] `gcs_translator.py` marked executable via git file mode
-- [x] **Import fallback updated** — `gcs_translator.py` now tries `InfrastructureInterface` path first, falls back to legacy paths with clear diagnostic output (2026-03-15)
+- [x] **Import paths fully migrated** — legacy `Packet/Communication` paths removed; `gcs_translator.py` now requires `InfrastructureInterface` exclusively (`LaunchVehicleXBee`, `SendTelemetry`, `ReceiveCommand` in daemon thread) (2026-03-15)
 - [x] **Heartbeat command handling added** — `process_xbee_command()` now handles Command ID 1 (Heartbeat) consistent with `VehicleXBee.py` in gcs-infrastructure (2026-03-15)
 - [x] **Dynamic `vehicle_status`** — mapped from `HEARTBEAT.system_status` (MAV_STATE_ACTIVE=1, all others=0) instead of hardcoded `1` (2026-03-15)
