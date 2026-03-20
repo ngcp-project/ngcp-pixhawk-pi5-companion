@@ -15,18 +15,22 @@ except ImportError:
     print('pymavlink not installed. Run: pip install pymavlink')
     sys.exit(1)
 
-# Import GCS Modules via the new InfrastructureInterface API (gcs-infrastructure >= 2026-03).
-# Legacy Packet/Communication paths have been removed per TODO.md #2.
-# Ensure gcs-infrastructure is cloned at /home/ngcp25/gcs-infrastructure and
-# initialized: git submodule update --init --recursive && pip install -r requirements.txt
+# Import GCS Modules from gcs-infrastructure repo.
+# The repo must be cloned to: /home/ngcp25/gcs-infrastructure
+#   git clone https://github.com/ngcp-project/gcs-infrastructure.git /home/ngcp25/gcs-infrastructure
+#
+# NOTE (TODO #2): When gcs-infrastructure ships InfrastructureInterface, update to:
+#   from InfrastructureInterface import LaunchVehicleXBee, SendTelemetry, ReceiveCommand
+#   from Telemetry.Telemetry import Telemetry
 sys.path.append('/home/ngcp25/gcs-infrastructure')
 try:
-    from InfrastructureInterface import LaunchVehicleXBee, SendTelemetry, ReceiveCommand
-    from Telemetry.Telemetry import Telemetry
-    print('[gcs_translator] InfrastructureInterface API loaded.')
+    from Packet.Telemetry.Telemetry import Telemetry
+    from Communication.XBee.XBee import XBee
+    print('[gcs_translator] GCS modules loaded (Packet/Communication API).')
 except ImportError as e:
-    print(f'[gcs_translator] FATAL: Could not import InfrastructureInterface: {e}')
-    print('[gcs_translator] Run on Pi: git submodule update --init --recursive && pip install -r requirements.txt')
+    print(f'[gcs_translator] FATAL: Could not import GCS modules: {e}')
+    print('[gcs_translator] Clone gcs-infrastructure to /home/ngcp25/gcs-infrastructure')
+    print('[gcs_translator]   git clone https://github.com/ngcp-project/gcs-infrastructure.git /home/ngcp25/gcs-infrastructure')
     sys.exit(1)
 
 # Configuration
@@ -188,6 +192,7 @@ def main():
     last_send_time = time.time()
     send_interval = 0.2  # 5 Hz
     latest_command = None
+    raw_battery_mv = 0.0
 
     logger.info('Starting telemetry translation loop (5 Hz Target)...')
 
@@ -212,6 +217,7 @@ def main():
             elif msg_type == 'SYS_STATUS':
                 # Convert mV to Battery Voltage
                 if hasattr(msg, 'voltage_battery'):
+                    raw_battery_mv = msg.voltage_battery
                     telemetry.battery_life = msg.voltage_battery / 1000.0
             elif msg_type == 'HEARTBEAT':
                 # Map MAVLink system_status to GCS vehicle_status field.
@@ -292,7 +298,7 @@ def main():
                         "pitch": telemetry.pitch,
                         "roll": telemetry.roll,
                         "yaw": telemetry.yaw,
-                        "battery": telemetry.battery_life,
+                        "battery": raw_battery_mv,
                         "hex_payload": hex_str,
                         "last_updated": telemetry.last_updated,
                         "latest_command": latest_command
