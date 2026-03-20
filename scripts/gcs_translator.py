@@ -8,7 +8,7 @@ import struct
 import socket
 import threading
 import queue
-
+from enum import Enum
 try:
     from pymavlink import mavutil
 except ImportError:
@@ -67,14 +67,24 @@ class MockXBee:
 def process_xbee_command(data, mav_connection, logger):
     """Parses custom GCS frame bytes and converts back to MAVLink.
 
+    
     Command IDs match VehicleXBee.py in gcs-infrastructure:
       1 = Heartbeat
       2 = EmergencyStop  (Format: BBB — PAYLOAD_ID, COMMAND_ID, status)
-      3 = KeepIn         (not yet handled here)
-      4 = KeepOut        (not yet handled here)
-      5 = PatientLocation (not yet handled here)
-      6 = SearchArea      (not yet handled here)
+      3 = KeepIn         (not yet implemented)
+      4 = KeepOut        (not yet implemented)
+      5 = PatientLocation (not yet implemented)
+      6 = SearchArea      (not yet implemented)
     """
+    #Command ID
+    class Command(Enum):
+        Heartbeat = 1
+        EmergencyStop = 2
+        KeepIn = 3
+        KeepOut = 4
+        PatientLocation = 5
+        SearchArea = 6
+
     if not data or not isinstance(data, bytes) or len(data) == 0:
         return None
 
@@ -84,14 +94,14 @@ def process_xbee_command(data, mav_connection, logger):
 
     if len(data) >= 2:
         COMMAND_ID = data[1]
-
+        
         # Heartbeat Command (ID: 1) — GCS keepalive
-        if COMMAND_ID == 1:
+        if COMMAND_ID == Command.Heartbeat:
             logger.info("Received HEARTBEAT command from GCS")
             return {"command": "Heartbeat", "timestamp": time.time()}
 
         # Emergency Stop Command (ID: 2, Format: BBB) — per gcs-infrastructure spec
-        if COMMAND_ID == 2 and len(data) >= 3:
+        if COMMAND_ID == Command.EmergencyStop and len(data) >= 3:
             status = data[2]
             action = "ENABLE" if status == 0 else "DISABLE"
             logger.info(f"Received EMERGENCY STOP command: {action}")
@@ -109,6 +119,22 @@ def process_xbee_command(data, mav_connection, logger):
                     logger.error(f"Failed to send MAVLink command: {e}")
 
             return {"command": "EmergencyStop", "action": action, "timestamp": time.time()}
+        
+        #KeepIn (not yet implemented)
+        if COMMAND_ID == Command.KeepIn and len(data) >= 3:
+            return None
+
+        #KeepOut (not yet implemented)
+        if COMMAND_ID == Command.KeepOut and len(data) >= 3:
+            return None
+        
+        #PaitentLocation (not yet implemented)
+        if COMMAND_ID == Command.PatientLocation and len(data) >= 3:
+            return None
+        
+        #Search Area (not yet implemented)
+        if COMMAND_ID == Command.PatientLocation and len(data) >= 3:
+            return None
 
     return None
 
