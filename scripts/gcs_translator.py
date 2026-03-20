@@ -155,25 +155,26 @@ def main():
     mav_connection.wait_heartbeat()
     logger.info(f'Heartbeat from system (system {mav_connection.target_system} component {mav_connection.target_component})')
 
-    # 2. Launch XBee via InfrastructureInterface (handles TX/RX threads internally).
-    # Falls back to MockXBee (UDP) if hardware is not present.
+    # 2. Connect to XBee radio (real hardware or MockXBee UDP fallback).
+    # NOTE (TODO #2): When InfrastructureInterface is available, replace with:
+    #   LaunchVehicleXBee(XBEE_PORT) / ReceiveCommand()
     xb_mode = 'none'
-    mock_xb = None
+    xb = None
     _cmd_queue: queue.Queue = queue.Queue()
 
     try:
-        LaunchVehicleXBee(XBEE_PORT)
+        xb = XBee(port=get_xbee_port(), baudrate=XBEE_BAUD)
+        xb.open()
         xb_mode = 'real'
-        logger.info(f'XBee launched via InfrastructureInterface on {XBEE_PORT} at {XBEE_BAUD} baud.')
+        logger.info(f'XBee connected on {get_xbee_port()} at {XBEE_BAUD} baud.')
 
-        # ReceiveCommand() is blocking — run it in a background daemon thread
-        # so the main telemetry loop stays non-blocking.
+        # Poll XBee for incoming commands in a background daemon thread.
         def _cmd_receiver():
             while True:
                 try:
-                    cmd_obj = ReceiveCommand()
-                    if cmd_obj is not None:
-                        _cmd_queue.put(cmd_obj)
+                    frame = xb.retrieve_data()
+                    if frame is not None and hasattr(frame, 'received_data'):
+                        _cmd_queue.put(frame.received_data)
                 except Exception as exc:
                     logger.error(f'Command receiver thread error: {exc}')
                     time.sleep(0.1)
@@ -182,9 +183,9 @@ def main():
         logger.info('Command receiver thread started.')
 
     except Exception as e:
-        logger.warning(f'Could not launch XBee via InfrastructureInterface: {e}')
+        logger.warning(f'Could not connect XBee: {e}')
         logger.warning('Proceeding in TEST MODE (UDP MockXBee on port 14551).')
-        mock_xb = MockXBee(port=14551)
+        xb = MockXBee(port=14551)
         xb_mode = 'mock'
 
     # 3. Main Translation Loop
@@ -253,8 +254,8 @@ def main():
                             logger.error(f'Failed to send MAVLink command: {mav_exc}')
             except queue.Empty:
                 pass
-        elif xb_mode == 'mock' and mock_xb:
-            frame = mock_xb.retrieve_data()
+        elif xb_mode == 'mock' and xb:
+            frame = xb.retrieve_data()
             if frame and hasattr(frame, 'received_data'):
                 cmd_event = process_xbee_command(frame.received_data, mav_connection, logger)
                 if cmd_event:
@@ -272,18 +273,18 @@ def main():
             telemetry.message_flag = 0
             telemetry.patient_status = 0
             
-            # Encode and transmit telemetry.
-            # Real mode: SendTelemetry() queues the Telemetry object; InfrastructureInterface
-            #            handles encoding (Encode()) and XBee transmission internally.
-            # Mock mode: encode locally and log; MockXBee.transmit_data is a no-op.
+            # Encode and transmit telemetry over XBee (real or mock).
+            # NOTE (TODO #2): In real mode, replace with SendTelemetry(telemetry)
+            #                 once InfrastructureInterface is available.
             try:
                 payload_bytes = telemetry.encode()
                 hex_str = ' '.join(f'{b:02x}' for b in payload_bytes)
 
-                if xb_mode == 'real':
-                    SendTelemetry(telemetry)
-                elif xb_mode == 'mock' and mock_xb:
-                    mock_xb.transmit_data(payload_bytes, retrieveStatus=False)
+                if xb_mode == 'real' and xb:
+                    xb.transmit_data(payload_bytes, retrieveStatus=False)
+                    logger.info(f'XBee -> Tlm Packet: [{len(payload_bytes)}B] {hex_str}')
+                elif xb_mode == 'mock' and xb:
+                    xb.transmit_data(payload_bytes, retrieveStatus=False)
                     logger.info(f'MOCK -> Tlm Packet: [{len(payload_bytes)}B] {hex_str}')
                 else:
                     logger.info(f'NO XBEE -> Tlm Packet: [{len(payload_bytes)}B] {hex_str}')
