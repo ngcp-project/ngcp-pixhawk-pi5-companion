@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KrakenSDR Triangulator — NGCP</title>
+    <meta name="description" content="KrakenSDR bearing verification and signal-source triangulation for NGCP UAV operations.">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- ── Header ── -->
+        <header id="app-header">
+            <div class="header-left">
+                <div class="logo-mark">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+                        <path d="M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/>
+                    </svg>
+                </div>
+                <div class="header-title">
+                    <span class="title-main">KrakenSDR Triangulator</span>
+                    <span class="title-sub">NGCP Signal Verification Tool</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div id="mode-badge" class="badge badge-mock">MOCK DATA</div>
+                <div id="health-dot" class="health-dot offline" title="Server connection status"></div>
+            </div>
+        </header>
+
+        <!-- ── Tab Bar ── -->
+        <nav id="tab-bar">
+            <button class="tab-btn active" data-tab="map" id="tab-map">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/>
+                    <line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/>
+                </svg>
+                GPS Map
+            </button>
+            <button class="tab-btn" data-tab="heatmap" id="tab-heatmap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>
+                </svg>
+                Heatmap
+            </button>
+            <button class="tab-btn" data-tab="log" id="tab-log">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+                    <polyline points="10 9 9 9 8 9"/>
+                </svg>
+                Bearing Log
+            </button>
+            <button class="tab-btn" data-tab="settings" id="tab-settings">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+                Settings
+            </button>
+        </nav>
+
+        <!-- ── Playback Control Bar (mock mode only) ── -->
+        <div id="playback-bar" style="display:none">
+            <div class="pb-left">
+                <span class="pb-label">MOCK PLAYBACK</span>
+            </div>
+            <div class="pb-center">
+                <button class="pb-btn" id="pb-reset" title="Reset to start">&#9198;</button>
+                <button class="pb-btn" id="pb-rewind" title="Previous waypoint">&#9194;</button>
+                <button class="pb-btn pb-btn-main" id="pb-playpause" title="Play / Pause">&#9654;</button>
+                <button class="pb-btn" id="pb-forward" title="Next waypoint">&#9193;</button>
+            </div>
+            <div class="pb-progress">
+                <span class="pb-pos" id="pb-pos-label">1 / 6</span>
+                <input type="range" id="pb-scrubber" min="1" max="6" value="1" step="1">
+            </div>
+            <div class="pb-right">
+                <label class="pb-speed-label">Speed
+                    <select id="pb-speed">
+                        <option value="0.25">0.25x</option>
+                        <option value="0.5">0.5x</option>
+                        <option value="1" selected>1x</option>
+                        <option value="2">2x</option>
+                        <option value="4">4x</option>
+                        <option value="8">8x</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+
+        <!-- ── Main Content ── -->
+        <main id="main-content">
+
+            <!-- Map Tab -->
+            <div class="tab-panel active" id="panel-map">
+                <div id="map-container">
+                    <div id="map"></div>
+                    <div id="map-sidebar">
+                        <div class="sidebar-card" id="triangulation-result">
+                            <h3>Triangulation Result</h3>
+                            <div class="result-item">
+                                <span class="result-label">EST. LATITUDE</span>
+                                <span class="result-value mono" id="res-lat">—</span>
+                            </div>
+                            <div class="result-item">
+                                <span class="result-label">EST. LONGITUDE</span>
+                                <span class="result-value mono" id="res-lon">—</span>
+                            </div>
+                            <div class="result-item">
+                                <span class="result-label">RESIDUAL ERROR</span>
+                                <span class="result-value mono" id="res-error">—</span>
+                            </div>
+                            <div class="result-item">
+                                <span class="result-label">OBS. USED / TOTAL</span>
+                                <span class="result-value mono" id="res-stations">—</span>
+                            </div>
+                        </div>
+                        <div class="sidebar-card" id="station-list-card">
+                            <div class="card-header-flex" style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+                                <h3 style="margin-bottom:0;">Observations <span style="color:var(--text-muted);font-weight:400">(▶ = current)</span></h3>
+                                <button id="btn-collapse-obs" class="btn-icon" title="Toggle Collapse" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:16px;">▼</button>
+                            </div>
+                            <div id="station-list-wrapper">
+                                <div id="station-list">
+                                    <p class="placeholder-text">Waiting for observations...</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="sidebar-card">
+                            <h3>Freq / Mode</h3>
+                            <div class="result-item">
+                                <span class="result-label">FREQUENCY</span>
+                                <span class="result-value mono" id="res-freq">—</span>
+                            </div>
+                            <div class="result-item">
+                                <span class="result-label">DOA METHOD</span>
+                                <span class="result-value mono" id="res-doa">—</span>
+                            </div>
+                            <div class="result-item">
+                                <span class="result-label">LAST RECEIVED</span>
+                                <span class="result-value mono" id="res-timestamp">—</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Heatmap Tab -->
+            <div class="tab-panel" id="panel-heatmap">
+                <div id="heatmap-container">
+                    <div id="heatmap-map"></div>
+                    <div id="heatmap-controls">
+                        <div class="sidebar-card">
+                            <h3>Heatmap Settings</h3>
+                            <label class="control-label">Radius
+                                <input type="range" id="hm-radius" min="10" max="80" value="30">
+                                <span id="hm-radius-val">30</span>px
+                            </label>
+                            <label class="control-label">Blur
+                                <input type="range" id="hm-blur" min="5" max="50" value="20">
+                                <span id="hm-blur-val">20</span>px
+                            </label>
+                            <label class="control-label">Opacity
+                                <input type="range" id="hm-opacity" min="1" max="10" value="7">
+                                <span id="hm-opacity-val">0.7</span>
+                            </label>
+                        </div>
+                        <div class="sidebar-card">
+                            <h3>Accumulation</h3>
+                            <div class="result-item">
+                                <span class="result-label">POINTS</span>
+                                <span class="result-value mono" id="hm-point-count">0</span>
+                            </div>
+                            <button class="btn-secondary" id="hm-clear-btn">Clear History</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bearing Log Tab -->
+            <div class="tab-panel" id="panel-log">
+                <div id="log-container">
+                    <div id="log-toolbar">
+                        <span class="log-title">Bearing Estimate Log</span>
+                        <div class="log-actions">
+                            <span id="log-count" class="log-count">0 entries</span>
+                            <button class="btn-secondary" id="log-clear-btn">Clear</button>
+                            <button class="btn-secondary" id="log-export-btn">Export JSON</button>
+                        </div>
+                    </div>
+                    <div id="log-table-wrapper">
+                        <table id="log-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Time (UTC)</th>
+                                    <th>Station</th>
+                                    <th>Bearing (°)</th>
+                                    <th>Confidence</th>
+                                    <th>Freq (MHz)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="log-body">
+                                <tr class="log-placeholder">
+                                    <td colspan="6">Waiting for data...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Tab -->
+            <div class="tab-panel" id="panel-settings">
+                <div id="settings-container">
+                    <div class="settings-section">
+                        <h2>Data Source</h2>
+                        <div class="settings-group">
+                            <label class="setting-row">
+                                <span class="setting-label">Server URL</span>
+                                <input type="text" id="setting-server-url" class="setting-input" value="http://localhost:5050" readonly>
+                            </label>
+                            <label class="setting-row">
+                                <span class="setting-label">Poll Interval (ms)</span>
+                                <input type="number" id="setting-poll-interval" class="setting-input" value="2000" min="500" max="30000">
+                            </label>
+                        </div>
+                    </div>
+                    <div class="settings-section">
+                        <h2>Map</h2>
+                        <div class="settings-group">
+                            <label class="setting-row">
+                                <span class="setting-label">Base Map Tile</span>
+                                <select id="setting-tile" class="setting-input">
+                                    <option value="osm">OpenStreetMap</option>
+                                    <option value="topo">OpenTopoMap</option>
+                                    <option value="satellite">ESRI Satellite</option>
+                                </select>
+                            </label>
+                            <label class="setting-row">
+                                <span class="setting-label">Show Uncertainty Circle</span>
+                                <input type="checkbox" id="setting-uncertainty" checked>
+                            </label>
+                            <label class="setting-row">
+                                <span class="setting-label">Bearing Line Length (km)</span>
+                                <input type="number" id="setting-line-length" class="setting-input" value="2" min="0.1" max="20" step="0.1">
+                            </label>
+                        </div>
+                    </div>
+                    <div class="settings-section">
+                        <h2>Triangulation</h2>
+                        <div class="settings-group">
+                            <label class="setting-row">
+                                <span class="setting-label">Algorithm</span>
+                                <select id="setting-algo" class="setting-input">
+                                    <option value="ls_aoa">Least Squares AoA (LS-AoA)</option>
+                                    <option value="midpoint">Midpoint (2-station only)</option>
+                                </select>
+                            </label>
+                            <label class="setting-row">
+                                <span class="setting-label">Min. Confidence Threshold</span>
+                                <input type="number" id="setting-min-conf" class="setting-input" value="0.5" min="0" max="1" step="0.05">
+                            </label>
+                        </div>
+                    <div class="settings-section">
+                        <h2>Triangulation Filters</h2>
+                        <div class="settings-group">
+                            <label class="setting-row">
+                                <span class="setting-label">Spatial Outlier Rejection</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-filter-spatial" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </label>
+                            <label class="setting-row">
+                                <span class="setting-label">Temporal Sliding Window (Max 30)</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-filter-temporal" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </label>
+                            <label class="setting-row">
+                                <span class="setting-label">Strict Attitude Gating (Max 15° Roll)</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-filter-attitude" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </label>
+                            <label class="setting-row">
+                                <span class="setting-label">Angular Separation Gating</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-filter-angular" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </label>
+                        </div>
+                    </div>
+                    </div>
+                    <div class="settings-section">
+                        <h2>About</h2>
+                        <p class="about-text">
+                            KrakenSDR Triangulator v0.1.0<br>
+                            NGCP Pixhawk ↔ Pi 5 Companion — Commander Laptop Tool<br>
+                            Built for verifying KrakenSDR DOA bearing estimates.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <!-- Leaflet.heat plugin -->
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <!-- App Modules -->
+    <script src="js/triangulation.js"></script>
+    <script src="js/map.js"></script>
+    <script src="js/heatmap.js"></script>
+    <script src="js/data_feed.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
