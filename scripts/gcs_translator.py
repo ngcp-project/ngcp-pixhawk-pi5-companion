@@ -15,18 +15,22 @@ except ImportError:
     print('pymavlink not installed. Run: pip install pymavlink')
     sys.exit(1)
 
-# Import GCS Modules via the new InfrastructureInterface API (gcs-infrastructure >= 2026-03).
-# Legacy Packet/Communication paths have been removed per TODO.md #2.
-# Ensure gcs-infrastructure is cloned at /home/ngcp25/gcs-infrastructure and
-# initialized: git submodule update --init --recursive && pip install -r requirements.txt
+# Import GCS Modules from gcs-infrastructure repo.
+# The repo must be cloned to: /home/ngcp25/gcs-infrastructure
+#   git clone https://github.com/ngcp-project/gcs-infrastructure.git /home/ngcp25/gcs-infrastructure
+#
+# NOTE (TODO #2): When gcs-infrastructure ships InfrastructureInterface, update to:
+#   from InfrastructureInterface import LaunchVehicleXBee, SendTelemetry, ReceiveCommand
+#   from Telemetry.Telemetry import Telemetry
 sys.path.append('/home/ngcp25/gcs-infrastructure')
 try:
-    from InfrastructureInterface import LaunchVehicleXBee, SendTelemetry, ReceiveCommand
-    from Telemetry.Telemetry import Telemetry
-    print('[gcs_translator] InfrastructureInterface API loaded.')
+    from Packet.Telemetry.Telemetry import Telemetry
+    from Communication.XBee.XBee import XBee
+    print('[gcs_translator] GCS modules loaded (Packet/Communication API).')
 except ImportError as e:
-    print(f'[gcs_translator] FATAL: Could not import InfrastructureInterface: {e}')
-    print('[gcs_translator] Run on Pi: git submodule update --init --recursive && pip install -r requirements.txt')
+    print(f'[gcs_translator] FATAL: Could not import GCS modules: {e}')
+    print('[gcs_translator] Clone gcs-infrastructure to /home/ngcp25/gcs-infrastructure')
+    print('[gcs_translator]   git clone https://github.com/ngcp-project/gcs-infrastructure.git /home/ngcp25/gcs-infrastructure')
     sys.exit(1)
 
 # Configuration
@@ -149,25 +153,26 @@ def main():
     mav_connection.wait_heartbeat()
     logger.info(f'Heartbeat from system (system {mav_connection.target_system} component {mav_connection.target_component})')
 
-    # 2. Launch XBee via InfrastructureInterface (handles TX/RX threads internally).
-    # Falls back to MockXBee (UDP) if hardware is not present.
+    # 2. Connect to XBee radio (real hardware or MockXBee UDP fallback).
+    # NOTE (TODO #2): When InfrastructureInterface is available, replace with:
+    #   LaunchVehicleXBee(XBEE_PORT) / ReceiveCommand()
     xb_mode = 'none'
-    mock_xb = None
+    xb = None
     _cmd_queue: queue.Queue = queue.Queue()
 
     try:
-        LaunchVehicleXBee(XBEE_PORT)
+        xb = XBee(port=get_xbee_port(), baudrate=XBEE_BAUD)
+        xb.open()
         xb_mode = 'real'
-        logger.info(f'XBee launched via InfrastructureInterface on {XBEE_PORT} at {XBEE_BAUD} baud.')
+        logger.info(f'XBee connected on {get_xbee_port()} at {XBEE_BAUD} baud.')
 
-        # ReceiveCommand() is blocking — run it in a background daemon thread
-        # so the main telemetry loop stays non-blocking.
+        # Poll XBee for incoming commands in a background daemon thread.
         def _cmd_receiver():
             while True:
                 try:
-                    cmd_obj = ReceiveCommand()
-                    if cmd_obj is not None:
-                        _cmd_queue.put(cmd_obj)
+                    frame = xb.retrieve_data()
+                    if frame is not None and hasattr(frame, 'received_data'):
+                        _cmd_queue.put(frame.received_data)
                 except Exception as exc:
                     logger.error(f'Command receiver thread error: {exc}')
                     time.sleep(0.1)
@@ -176,9 +181,9 @@ def main():
         logger.info('Command receiver thread started.')
 
     except Exception as e:
-        logger.warning(f'Could not launch XBee via InfrastructureInterface: {e}')
+        logger.warning(f'Could not connect XBee: {e}')
         logger.warning('Proceeding in TEST MODE (UDP MockXBee on port 14551).')
-        mock_xb = MockXBee(port=14551)
+        xb = MockXBee(port=14551)
         xb_mode = 'mock'
 
     # 3. Main Translation Loop
@@ -186,6 +191,7 @@ def main():
     last_send_time = time.time()
     send_interval = 0.2  # 5 Hz
     latest_command = None
+    raw_battery_mv = 0.0
 
     logger.info('Starting telemetry translation loop (5 Hz Target)...')
 
@@ -210,6 +216,7 @@ def main():
             elif msg_type == 'SYS_STATUS':
                 # Convert mV to Battery Voltage
                 if hasattr(msg, 'voltage_battery'):
+                    raw_battery_mv = msg.voltage_battery
                     telemetry.battery_life = msg.voltage_battery / 1000.0
             elif msg_type == 'HEARTBEAT':
                 # Map MAVLink system_status to GCS vehicle_status field.
@@ -232,10 +239,8 @@ def main():
                     latest_command = cmd_event
             except queue.Empty:
                 pass
-                
-
-        elif xb_mode == 'mock' and mock_xb:
-            frame = mock_xb.retrieve_data()
+        elif xb_mode == 'mock' and xb:
+            frame = xb.retrieve_data()
             if frame and hasattr(frame, 'received_data'):
                 cmd_event = process_xbee_command(frame.received_data, mav_connection, logger)
                 if cmd_event:
@@ -253,18 +258,18 @@ def main():
             telemetry.message_flag = 0
             telemetry.patient_status = 0
             
-            # Encode and transmit telemetry.
-            # Real mode: SendTelemetry() queues the Telemetry object; InfrastructureInterface
-            #            handles encoding (Encode()) and XBee transmission internally.
-            # Mock mode: encode locally and log; MockXBee.transmit_data is a no-op.
+            # Encode and transmit telemetry over XBee (real or mock).
+            # NOTE (TODO #2): In real mode, replace with SendTelemetry(telemetry)
+            #                 once InfrastructureInterface is available.
             try:
                 payload_bytes = telemetry.encode()
                 hex_str = ' '.join(f'{b:02x}' for b in payload_bytes)
 
-                if xb_mode == 'real':
-                    SendTelemetry(telemetry)
-                elif xb_mode == 'mock' and mock_xb:
-                    mock_xb.transmit_data(payload_bytes, retrieveStatus=False)
+                if xb_mode == 'real' and xb:
+                    xb.transmit_data(payload_bytes, retrieveStatus=False)
+                    logger.info(f'XBee -> Tlm Packet: [{len(payload_bytes)}B] {hex_str}')
+                elif xb_mode == 'mock' and xb:
+                    xb.transmit_data(payload_bytes, retrieveStatus=False)
                     logger.info(f'MOCK -> Tlm Packet: [{len(payload_bytes)}B] {hex_str}')
                 else:
                     logger.info(f'NO XBEE -> Tlm Packet: [{len(payload_bytes)}B] {hex_str}')
@@ -279,7 +284,7 @@ def main():
                         "pitch": telemetry.pitch,
                         "roll": telemetry.roll,
                         "yaw": telemetry.yaw,
-                        "battery": telemetry.battery_life,
+                        "battery": raw_battery_mv,
                         "hex_payload": hex_str,
                         "last_updated": telemetry.last_updated,
                         "latest_command": latest_command

@@ -15,9 +15,13 @@
 # External Repository Dependency (NOT pip-installable):
 #   The GCS translation pipeline depends on the gcs-infrastructure
 #   repository being cloned to: /home/ngcp25/gcs-infrastructure
-#   Modules used:
-#     - Packet.Telemetry.Telemetry
-#     - Communication.XBee.XBee
+#
+#   Clone command:
+#     git clone https://github.com/ngcp-project/gcs-infrastructure.git /home/ngcp25/gcs-infrastructure
+#
+#   Modules used (InfrastructureInterface API, gcs-infrastructure >= 2026-03):
+#     - InfrastructureInterface (LaunchVehicleXBee, SendTelemetry, ReceiveCommand)
+#     - Telemetry.Telemetry
 #
 # ============================================================
 
