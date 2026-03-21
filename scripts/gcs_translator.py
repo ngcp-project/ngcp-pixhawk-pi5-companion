@@ -70,8 +70,6 @@ class MockXBee:
 
 def process_xbee_command(data, mav_connection, logger):
     """Parses custom GCS frame bytes and converts back to MAVLink.
-
-    
     Command IDs match VehicleXBee.py in gcs-infrastructure:
       1 = Heartbeat
       2 = EmergencyStop  (Format: BBB — PAYLOAD_ID, COMMAND_ID, status)
@@ -81,7 +79,7 @@ def process_xbee_command(data, mav_connection, logger):
       6 = SearchArea      (not yet implemented)
     """
     #Command ID
-    class Command(Enum):
+    class Command(IntEnum):
         Heartbeat = 1
         EmergencyStop = 2
         KeepIn = 3
@@ -137,7 +135,7 @@ def process_xbee_command(data, mav_connection, logger):
             return None
         
         #Search Area (not yet implemented)
-        if COMMAND_ID == Command.PatientLocation and len(data) >= 3:
+        if COMMAND_ID == Command.SearchArea and len(data) >= 3:
             return None
 
     return None
@@ -236,22 +234,9 @@ def main():
         if xb_mode == 'real':
             try:
                 cmd_obj = _cmd_queue.get_nowait()
-                cmd_name = type(cmd_obj).__name__
-                logger.info(f'Received GCS command: {cmd_name}')
-                latest_command = {"command": cmd_name, "timestamp": time.time()}
-                # Forward EmergencyStop to MAVLink flight controller
-                if cmd_name == 'EmergencyStop':
-                    status = getattr(cmd_obj, 'Status', getattr(cmd_obj, 'status', 0))
-                    if status == 0:
-                        logger.info('Sending MAV_CMD_DO_FLIGHTTERMINATION to flight controller!')
-                        try:
-                            mav_connection.mav.command_long_send(
-                                mav_connection.target_system, mav_connection.target_component,
-                                mavutil.mavlink.MAV_CMD_DO_FLIGHTTERMINATION, 0,
-                                1.0, 0, 0, 0, 0, 0, 0
-                            )
-                        except Exception as mav_exc:
-                            logger.error(f'Failed to send MAVLink command: {mav_exc}')
+                cmd_event = process_xbee_command(cmd_obj, mav_connection, logger)
+                if cmd_event:
+                    latest_command = cmd_event
             except queue.Empty:
                 pass
         elif xb_mode == 'mock' and xb:
