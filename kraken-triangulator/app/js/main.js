@@ -27,7 +27,6 @@
             panel.classList.toggle('active', panel.id === `panel-${targetId}`);
         });
         // Fix: call invalidateSize so Leaflet redraws after hidden→visible
-        if (targetId === 'heatmap') requestAnimationFrame(() => HeatmapView.invalidateSize());
         if (targetId === 'map')     requestAnimationFrame(() => MapView.invalidateSize());
     }
 
@@ -41,6 +40,31 @@
     const elLineLength   = document.getElementById('setting-line-length');
     const elAlgo         = document.getElementById('setting-algo');
     const elMinConf      = document.getElementById('setting-min-conf');
+    const elUnits        = document.getElementById('setting-units');
+
+    function bindSetting(el) {
+        if (!el) return;
+        const key = `kraken_setting_${el.id}`;
+        const saved = localStorage.getItem(key);
+        
+        if (saved !== null) {
+            if (el.type === 'checkbox') el.checked = (saved === 'true');
+            else el.value = saved;
+        }
+        
+        el.addEventListener('change', () => {
+            const val = el.type === 'checkbox' ? el.checked : el.value;
+            localStorage.setItem(key, val);
+        });
+    }
+
+    const _allSettings = [elPollInterval, elTile, elUncertainty, elLineLength, elAlgo, elMinConf, elUnits, 
+        document.getElementById('setting-filter-spatial'), 
+        document.getElementById('setting-filter-temporal'), 
+        document.getElementById('setting-filter-attitude'), 
+        document.getElementById('setting-filter-angular')];
+        
+    _allSettings.forEach(bindSetting);
 
     elPollInterval?.addEventListener('change', () =>
         DataFeed.setPollInterval(parseInt(elPollInterval.value, 10) || 2000));
@@ -62,6 +86,19 @@
         });
     });
 
+    elUnits?.addEventListener('change', () => {
+        MapView.refreshCustomMarkers();
+    });
+
+    document.getElementById('btn-shutdown')?.addEventListener('click', async () => {
+        if (!confirm("Are you sure you want to stop the background tracking server? You will lose live telemetry. The terminal will exit.")) return;
+        try {
+            await fetch('/api/shutdown', { method: 'POST' });
+            document.body.innerHTML = '<div style="display:flex; height:100vh; align-items:center; justify-content:center; color:#fff; text-align:center; font-family:sans-serif;"><h1>Server Shutdown Successfully. <br><span style="font-size:16px; color:#888;">You can safely close this browser tab.</span></h1></div>';
+            setTimeout(() => window.close(), 500);
+        } catch(e) {}
+    });
+
     document.getElementById('btn-collapse-obs')?.addEventListener('click', () => {
         const card = document.getElementById('station-list-card');
         if (card) card.classList.toggle('obs-collapsed');
@@ -78,10 +115,10 @@
             setFn(factor ? v * factor : v);
         });
     }
-    wireSlider('hm-radius',  'hm-radius-val',  null, HeatmapView.setRadius);
-    wireSlider('hm-blur',    'hm-blur-val',    null, HeatmapView.setBlur);
-    wireSlider('hm-opacity', 'hm-opacity-val', 0.1,  HeatmapView.setOpacity);
-    document.getElementById('hm-clear-btn')?.addEventListener('click', HeatmapView.clear);
+    wireSlider('hm-radius',  'hm-radius-val',  null, MapView.setHeatRadius);
+    wireSlider('hm-blur',    'hm-blur-val',    null, MapView.setHeatBlur);
+    wireSlider('hm-opacity', 'hm-opacity-val', 0.1,  MapView.setHeatOpacity);
+    document.getElementById('hm-clear-btn')?.addEventListener('click', MapView.clearHeat);
 
     // ── Playback Controls ──────────────────────────────────────────
     const pbBar       = document.getElementById('playback-bar');
@@ -114,7 +151,11 @@
     }
 
     function _updatePlaybackUI(pb) {
-        if (!pb) return;
+        if (!pb) {
+            if (pbBar) pbBar.style.display = 'none';
+            return;
+        }
+        if (pbBar) pbBar.style.display = 'flex';
         _pbPaused = pb.paused;
         // Play/Pause icon: paused = show play triangle, playing = show pause bars
         pbPlayPause.innerHTML = pb.paused ? '&#9654;' : '&#9646;&#9646;';
@@ -256,11 +297,31 @@
     // ── Core Data Pipeline ─────────────────────────────────────────
     let _lastData = null;
 
+    const modeBadge = document.getElementById('mode-badge');
+
     function _processData(data) {
         _lastData = data;
 
-        // Show/hide playback bar
-        if (data?.source === 'mock' && pbBar) pbBar.style.display = 'flex';
+        // Status Badge and Playback Logic
+        if (data?.source === 'udp_stream') {
+            if (pbBar) pbBar.style.display = 'none';
+            if (modeBadge) {
+                modeBadge.textContent = 'LIVE TELEMETRY';
+                modeBadge.className = 'badge badge-live';
+                modeBadge.style.background = '#00b894';
+                modeBadge.style.color = '#fff';
+                modeBadge.style.border = 'none';
+            }
+        } else if (data?.source === 'mock') {
+            if (pbBar) pbBar.style.display = 'flex';
+            if (modeBadge) {
+                modeBadge.textContent = 'MOCK DATA';
+                modeBadge.className = 'badge badge-mock';
+                modeBadge.style.background = '';
+                modeBadge.style.color = '';
+                modeBadge.style.border = '';
+            }
+        }
 
         // Sync playback UI from embedded state
         if (data?.playback) _updatePlaybackUI(data.playback);
@@ -290,14 +351,18 @@
         const algo   = elAlgo?.value || 'ls_aoa';
         const result = validObs.length >= 2 ? Triangulation.solve(validObs, algo, config) : null;
 
-        MapView.update(data, result);
+        MapView.update(data, result, validObs);
 
         if (result) {
-            const avgConf   = validObs.reduce((s, o) => s + (o.confidence ?? 1), 0) / validObs.length;
-            const intensity = Math.min(1.0, (validObs.length / 6) * avgConf);
-            HeatmapView.addPoint(result.lat, result.lon, intensity);
+            if (algo === 'bayesian' && result.heatGrid) {
+                MapView.setHeatGrid(result.heatGrid);
+            } else {
+                const avgConf   = validObs.reduce((s, o) => s + (o.confidence ?? 1), 0) / validObs.length;
+                const intensity = Math.min(1.0, (validObs.length / 6) * avgConf);
+                MapView.addHeatPoint(result.lat, result.lon, intensity);
+            }
             const el = document.getElementById('hm-point-count');
-            if (el) el.textContent = HeatmapView.getPointCount();
+            if (el) el.textContent = MapView.getHeatPointCount();
         }
 
         updateResultPanel(data, result, validObs);
@@ -309,7 +374,14 @@
     // ── Eager Map Init ─────────────────────────────────────────────
     requestAnimationFrame(() => {
         MapView.init('map');
-        HeatmapView.init('heatmap-map');
+        
+        // Eagerly apply loaded settings cleanly
+        _allSettings.forEach(el => {
+            if (el && el !== elPollInterval) {
+                el.dispatchEvent(new Event('change'));
+            }
+        });
+        
         console.log('[App] Maps initialised. Starting data feed...');
         DataFeed.start();
     });

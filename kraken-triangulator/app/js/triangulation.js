@@ -149,6 +149,95 @@ const Triangulation = (() => {
     }
 
     /**
+     * Solution 2: Bayesian Spatial Grid Triangulation
+     * Creates a spatial grid and evaluates the probability density 
+     * mathematically eliminating multipath interference.
+     */
+    function bayesianGrid(stations) {
+        if (!stations || stations.length < 2) return null;
+
+        // Use LS-AoA as the grid center to focus the compute power
+        const lsResult = lsAoA(stations);
+        let refLat = lsResult ? lsResult.lat : stations.reduce((s, st) => s + st.lat, 0) / stations.length;
+        let refLon = lsResult ? lsResult.lon : stations.reduce((s, st) => s + st.lon, 0) / stations.length;
+
+        const GRID_SIZE_M = 15000; // 15km x 15km grid
+        const STEP_M = 100; // 100m cell resolution
+        const HALF = GRID_SIZE_M / 2;
+        const SIGMA = 5.0; // 5 degrees standard deviation for bearing blur
+
+        let maxScore = -Infinity;
+        let bestE = 0, bestN = 0;
+        let heatPoints = [];
+
+        // Pre-convert stations
+        const enuStations = stations.map(st => ({
+            ...st,
+            enu: latLonToENU(st.lat, st.lon, refLat, refLon)
+        }));
+
+        // Traverse the spatial grid
+        for (let y = -HALF; y <= HALF; y += STEP_M) {
+            for (let x = -HALF; x <= HALF; x += STEP_M) {
+                let logScore = 0;
+                for (const st of enuStations) {
+                    const dx = x - st.enu.E;
+                    const dy = y - st.enu.N;
+                    
+                    // Angle from station to cell
+                    const mathAngle = Math.atan2(dy, dx) * RAD2DEG;
+                    let targetBearing = 90 - mathAngle;
+                    if (targetBearing < 0) targetBearing += 360;
+
+                    let diff = Math.abs(targetBearing - st.bearing_deg) % 360;
+                    if (diff > 180) diff = 360 - diff;
+
+                    const weight = st.confidence ?? 1.0;
+                    // Log-probability of Gaussian
+                    logScore += weight * (-(diff * diff) / (2 * SIGMA * SIGMA));
+                }
+
+                if (logScore > maxScore) {
+                    maxScore = logScore;
+                    bestE = x;
+                    bestN = y;
+                }
+                heatPoints.push({ x, y, score: logScore });
+            }
+        }
+
+        // Normalize scores to probabilities for the Leaflet visual map
+        const visualGrid = heatPoints
+            .map(pt => {
+                pt.prob = Math.exp(pt.score - maxScore); // highest will be 1.0
+                return pt;
+            })
+            .filter(pt => pt.prob > 0.1) // Only render the 'hot' cloud to save rendering CPU
+            .map(pt => {
+                const ll = enuToLatLon(pt.x, pt.y, refLat, refLon);
+                return [ll.lat, ll.lon, pt.prob];
+            });
+
+        const resultLatLon = enuToLatLon(bestE, bestN, refLat, refLon);
+
+        // Compute geometric residual variance
+        let totalResidual = 0;
+        for (const st of enuStations) {
+            const theta = (90 - st.bearing_deg) * DEG2RAD;
+            const dist = Math.abs(Math.sin(theta) * (bestE - st.enu.E) - Math.cos(theta) * (bestN - st.enu.N));
+            totalResidual += dist;
+        }
+
+        return {
+            lat: resultLatLon.lat,
+            lon: resultLatLon.lon,
+            residual_m: totalResidual / stations.length,
+            stationsUsed: stations.length,
+            heatGrid: visualGrid
+        };
+    }
+
+    /**
      * Pairwise intersection helper
      */
     function getIntersection(a, b, refLat, refLon) {
@@ -249,17 +338,19 @@ const Triangulation = (() => {
     return {
         lsAoA,
         midpoint,
+        bayesianGrid,
         filterStations,
         /**
          * Main entry: picks algorithm based on settings.
          * @param {Array}  stations  — filtered station objects
-         * @param {string} algo      — 'ls_aoa' | 'midpoint'
+         * @param {string} algo      — 'ls_aoa' | 'midpoint' | 'bayesian'
          * @param {Object} config    — filtering options map
          */
         solve(stations, algo = 'ls_aoa', config = {}) {
             const filtered = this.filterStations(stations, config);
             if (!filtered || filtered.length < 2) return null;
             if (algo === 'midpoint' && filtered.length === 2) return midpoint(filtered);
+            if (algo === 'bayesian') return bayesianGrid(filtered);
             return lsAoA(filtered);
         },
     };

@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import time
+import socket
 import threading
 import logging
 from pathlib import Path
@@ -41,7 +42,7 @@ except ImportError:
 # ── Configuration ──────────────────────────────────────────────────────────────
 PORT            = int(os.environ.get("PORT", 5050))
 KRAKEN_API_URL  = os.environ.get("KRAKEN_API_URL", "")
-BASE_ADVANCE_S  = float(os.environ.get("ADVANCE_EVERY_S", "10"))
+BASE_ADVANCE_S  = float(os.environ.get("ADVANCE_EVERY_S", "0.5"))
 
 BASE_DIR        = Path(__file__).resolve().parent.parent
 MOCK_FILE_NAME  = os.environ.get("BEARINGS_FILE", "mock_bearings.json")
@@ -65,6 +66,12 @@ _speed          = 1.0      # Multiplier: 0.25x, 0.5x, 1x, 2x, 4x
 _last_advance_t = 0.0
 # Observation receive timestamps (system clock, not mock data)
 _obs_timestamps = {}       # { obs_id: ISO timestamp string }
+
+# ── Live UDP State ────────────────────────────────────────────────────────────
+_live_mode      = False
+UDP_PORT        = int(os.environ.get("UDP_PORT", 5051))
+_live_history   = []
+_live_current   = None
 
 def _load_mock():
     global _mock_data, _waypoints, _obs_index, _last_advance_t, _obs_timestamps
@@ -103,6 +110,18 @@ def _advance_waypoint():
         _last_advance_t = now
 
 def _build_response():
+    if _live_mode:
+        return {
+            "source":              "udp_stream",
+            "frequency_hz":        _mock_data.get("frequency_hz", 462637500) if _mock_data else 462637500,
+            "mode":                "live_telemetry",
+            "doa_method":          _mock_data.get("doa_method", "MUSIC") if _mock_data else "MUSIC",
+            "current_observation": _live_current,
+            "observation_history": _live_history,
+            "expected_target":     _mock_data.get("expected_target") if _mock_data else None,
+            "playback":            None
+        }
+
     visible = _waypoints[:_obs_index]
     # Attach system-clock timestamps to each visible observation
     enriched = []
@@ -223,11 +242,35 @@ def health():
         })
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
+
+def udp_listener_thread():
+    global _live_mode, _live_history, _live_current
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("0.0.0.0", UDP_PORT))
+    logger.info(f"UDP Telemetry Listener bound to 0.0.0.0:{UDP_PORT}")
+    while True:
+        try:
+            data, addr = sock.recvfrom(65535)
+            payload = json.loads(data.decode("utf-8"))
+            # Ensure it has a system clock stamp
+            if 'received_at' not in payload:
+                payload['received_at'] = _now_iso()
+            with _lock:
+                _live_mode = True
+                _live_history.append(payload)
+                _live_current = payload
+        except Exception as e:
+            logger.error(f"UDP parse error: {e}")
+
 if __name__ == "__main__":
     _load_mock()
+    
+    # Spin up the background telemetry listener
+    threading.Thread(target=udp_listener_thread, daemon=True).start()
+
     if KRAKEN_API_URL:
-        logger.info(f"LIVE MODE — Proxying KrakenSDR API at {KRAKEN_API_URL}")
+        logger.info(f"LIVE KRAKEN MODE — Proxying KrakenSDR API at {KRAKEN_API_URL}")
     else:
-        logger.info(f"MOCK MODE — {len(_waypoints)} waypoints, base interval {BASE_ADVANCE_S}s")
+        logger.info(f"MOCK/UDP MODE — Ready for UDP stream on port {UDP_PORT} or falling back to {len(_waypoints)} waypoints.")
     logger.info(f"Opening at http://localhost:{PORT}")
     app.run(host="0.0.0.0", port=PORT, debug=False)
