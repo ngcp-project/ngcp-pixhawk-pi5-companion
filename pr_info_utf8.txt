@@ -1,0 +1,15 @@
+﻿title:	Added Process Xbee Command in Xb Real mode
+state:	OPEN
+author:	MathAlpha24
+labels:	
+assignees:	
+reviewers:	
+projects:	
+milestone:	
+number:	4
+url:	https://github.com/ngcp-project/ngcp-pixhawk-pi5-companion/pull/4
+additions:	7
+deletions:	20
+auto-merge:	disabled
+--
+Xb_mode in "real" mode did not previously use the process_xbee_command. Thus readded functionality along with bug edits.
