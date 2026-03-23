@@ -1,6 +1,7 @@
 # NGCP Pixhawk ↔ Raspberry Pi 5 Companion Link
 
 This repo is a **focused playbook + helper scripts** to validate and operationalize a **MAVLink UART link (TELEM2)** between a Pixhawk/Cube flight controller and a Raspberry Pi 5 companion computer, and to securely route that telemetry to the **Ground Control Station (GCS)** over an XBee radio.
+Note: Scripts and workflow are tailored specifically for CPP MRA and GCS. CPSLO MEA may use this Github repo with caution and it is strongly advised to use this repo as a template.
 
 ## What you get
 - Step-by-step SOPs for UART bring-up and validation.
