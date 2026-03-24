@@ -8,7 +8,7 @@ import struct
 import socket
 import threading
 import queue
-from enum import Enum
+from enum import IntEnum
 try:
     from pymavlink import mavutil
 except ImportError:
@@ -138,7 +138,7 @@ def process_xbee_command(data, mav_connection, logger):
         if COMMAND_ID == Command.SearchArea and len(data) >= 3:
             return None
 
-    return None
+    return None #return None if invalid IDs 
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
