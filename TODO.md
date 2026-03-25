@@ -18,18 +18,9 @@ Changed `COMMAND_ID == 3` → `COMMAND_ID == 2` to match gcs-infrastructure spec
 
 ---
 
-### 2. Update Import Paths When InfrastructureInterface Ships — ⏸️ DEFERRED
-**File:** `scripts/gcs_translator.py` — import block  
-**Status:** Deferred — `InfrastructureInterface` does not yet exist in `ngcp-project/gcs-infrastructure`. Reverted to confirmed-working `Packet/Communication` paths (commit `940d174`, 2026-03-20).  
-**Resolution:** When GCS Infrastructure subteam ships `InfrastructureInterface`, update the import block and XBee section in `gcs_translator.py` per the `NOTE (TODO #2)` comments already left inline.  
-**Risk:** None currently — `Packet/Telemetry/Telemetry.py` and `Communication/XBee/XBee.py` are present and working in `/home/ngcp25/gcs-infrastructure`.
-
-**Import change to apply when ready:**
-```python
-# TARGET (when InfrastructureInterface is available):
-from InfrastructureInterface import LaunchVehicleXBee, SendTelemetry, ReceiveCommand
-from Telemetry.Telemetry import Telemetry
-```
+### ~~2. Update Import Paths When InfrastructureInterface Ships~~ ✅ DONE
+**File:** `scripts/gcs_translator.py`  
+**Status:** Completed. Discovered `gcs-infrastructure` separated `Packet` and `Communication` into submodules (`gcs-packet`, `xbee-python`). Refactored `gcs_translator.py` to correctly import and use the actual `InfrastructureInterface` API (`LaunchVehicleXBee`, `ReceiveCommand`, `SendTelemetry`).
 ---
 
 ### ~~3. Fix XBee Frame Field Name Mismatch~~ ✅ DONE
