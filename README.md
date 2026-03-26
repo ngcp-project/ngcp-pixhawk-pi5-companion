@@ -36,6 +36,10 @@ To safely allow both the GCS and the Software Team's scripts to send commands to
 - **Offboard/Guided Mode:** Gives the Software Team's Autonomy Engine authority to autonomously navigate the drone.
 - **Loiter/Manual/RTL Mode:** Gives the GCS or RC operator absolute manual override authority, causing the flight controller to safely reject the Autonomy Engine's trajectory commands.
 
+### GCS Subteam API Integration Resolves
+In March 2026, the GCS Subteam significantly altered their telemetry API (`InfrastructureInterface`) by nesting payload definitions inside `lib/gcs-packet/Packet/` and changing Python standard dictionary packing `.encode()` to a proprietary `.Encode()` format. These undocumented branch mismatches crashed the `gcs_translator.py` background daemon silently on launch, halting telemetry web-hooks. 
+**Resolution:** The Pi 5 companion daemon now implicitly maps 4 layers deep into the newest `sys.path` to grab the raw dependencies and strictly uses their capitalized string definitions, successfully resolving the heartbeat stream. (See `docs/gcs_integration_fixes.md` for post-mortem).
+
 ## Optional: Tailscale VPN for Reliable SSH
 Due to the dynamic IP addressing (DHCP) on university networks and active blocking of local Multicast (mDNS), it can be difficult to reliably connect to the Raspberry Pi 5 companion computer over SSH (e.g. the IP changes every time it reconnects).
 To bypass these restrictions and avoid having a roaming IP address on every reboot, it is highly recommended to use **Tailscale**. Tailscale is a free, lightweight mesh VPN that assigns a permanent, static `100.x.x.x` IP address to the Pi 5.
@@ -85,7 +89,7 @@ This gives operators a real-time health overview of the entire data bus at a gla
 - ✅ MAVLink frames observed on TELEM2
 - ✅ MAVProxy receives heartbeat + parameters
 - ✅ GCS Custom Translation Pipeline Implemented (MAVLink -> UDP -> Python -> XBee)
-- 🔧 GCS compatibility fixes pending (see [`TODO.md`](TODO.md))
+- ✅ GCS Infrastructure API compatibility fixes resolved (see `docs/gcs_integration_fixes.md`)
 
 ## Contributing
 Update `docs/wiki` first, then mirror to the GitHub Wiki.
