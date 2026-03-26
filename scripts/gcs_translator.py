@@ -259,7 +259,7 @@ def main():
             
             # Encode and transmit telemetry over XBee (real or mock).
             try:
-                payload_bytes = telemetry.encode()
+                payload_bytes = telemetry.Encode()
                 hex_str = ' '.join(f'{b:02x}' for b in payload_bytes)
 
                 if xb_mode == 'real':
