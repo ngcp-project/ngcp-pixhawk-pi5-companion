@@ -1,26 +1,26 @@
 :root {
-    --bg-color: #0d1117;
-    --card-bg: rgba(22, 27, 34, 0.6);
-    --card-border: rgba(255, 255, 255, 0.08);
-    --text-primary: #c9d1d9;
-    --text-muted: #8b949e;
+    --bg-color: #000000;
+    --card-bg: transparent;
+    --card-border: #444444;
+    --text-primary: #FFFFFF;
+    --text-muted: #CCCCCC;
     --accent-blue: #58a6ff;
-    --accent-green: #3fb950;
-    --accent-red: #f85149;
-    --accent-orange: #d29922;
-    --glow-spread: 0 0 20px rgba(88, 166, 255, 0.15);
+    --accent-green: #4CAF50;
+    --accent-red: #F44336;
+    --accent-orange: #FF9800;
+    --glow-spread: none;
 }
 
 * {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
+    border-radius: 0 !important;
+    box-shadow: none !important;
 }
 
 body {
     background-color: var(--bg-color);
-    background-image: radial-gradient(circle at top right, rgba(88, 166, 255, 0.05), transparent 40%),
-                      radial-gradient(circle at bottom left, rgba(63, 185, 80, 0.05), transparent 40%);
     color: var(--text-primary);
     font-family: 'Inter', sans-serif;
     min-height: 100vh;
@@ -45,43 +45,42 @@ header {
 }
 
 h1 {
-    font-size: 1.8rem;
+    font-size: 1.5rem;
     font-weight: 700;
-    letter-spacing: -0.5px;
+    letter-spacing: 0px;
+    text-transform: uppercase;
 }
 
 h1 span {
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-primary);
 }
 
 .status {
     padding: 0.4rem 1rem;
-    border-radius: 20px;
     font-size: 0.85rem;
     font-weight: 600;
     letter-spacing: 1px;
     text-transform: uppercase;
-    transition: all 0.3s ease;
+    transition: none;
 }
 
 .status.online {
-    background-color: rgba(63, 185, 80, 0.1);
+    background-color: transparent;
     color: var(--accent-green);
-    border: 1px solid rgba(63, 185, 80, 0.2);
-    box-shadow: 0 0 10px rgba(63, 185, 80, 0.2);
+    border: 1px solid var(--accent-green);
 }
 
 .status.stale {
-    background-color: rgba(210, 153, 34, 0.1);
+    background-color: transparent;
     color: var(--accent-orange);
-    border: 1px solid rgba(210, 153, 34, 0.2);
+    border: 1px solid var(--accent-orange);
 }
 
 .status.offline {
-    background-color: rgba(248, 81, 73, 0.1);
+    background-color: transparent;
     color: var(--accent-red);
-    border: 1px solid rgba(248, 81, 73, 0.2);
+    border: 1px solid var(--accent-red);
 }
 
 main {
@@ -92,60 +91,49 @@ main {
 
 .card {
     background: var(--card-bg);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--card-border);
-    border-radius: 16px;
     padding: 1.5rem;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    transition: none;
 }
 
 .card:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--glow-spread);
-    border-color: rgba(255, 255, 255, 0.15);
+    transform: none;
+    border-color: var(--accent-orange);
 }
 
 h2 {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: bold;
+    color: var(--text-primary);
     margin-bottom: 1.2rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+    text-transform: uppercase;
 }
 
-.panel-attitude h2::before { content: "✈️"; }
-.panel-position h2::before { content: "📍"; }
-.panel-system h2::before { content: "⚙️"; }
-.panel-raw h2::before { content: "📦"; }
-.panel-commands h2::before { content: "⚠️"; }
-
 .data-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
 }
 
 .data-item {
     display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--card-border);
+    padding-bottom: 0.2rem;
 }
 
 .data-item .label {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    font-weight: 600;
-    letter-spacing: 0.5px;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    font-weight: 400;
 }
 
 .data-item .value {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--accent-blue);
-    font-variant-numeric: tabular-nums;
+    font-size: 0.85rem;
+    font-weight: 400;
+    color: var(--text-primary);
 }
 
 .panel-setup {
@@ -153,8 +141,8 @@ h2 {
 }
 
 .raw-output {
-    background: rgba(0, 0, 0, 0.3);
-    border-radius: 8px;
+    background: transparent;
+    border: 1px solid var(--card-border);
     padding: 1rem;
     font-family: 'Courier New', Courier, monospace;
     font-size: 0.85rem;
@@ -165,18 +153,11 @@ h2 {
     align-items: center;
 }
 
-@keyframes flashRed {
-    0% { box-shadow: 0 0 0 rgba(248, 81, 73, 0); border-color: var(--card-border); }
-    15% { box-shadow: 0 0 30px rgba(248, 81, 73, 0.9); border-color: rgba(248, 81, 73, 1); background-color: rgba(248, 81, 73, 0.2); transform: scale(1.02); }
-    100% { box-shadow: 0 0 0 rgba(248, 81, 73, 0); border-color: var(--card-border); background-color: var(--card-bg); transform: scale(1); }
-}
-
 .flash-red {
-    animation: flashRed 1s ease-out;
+    border-color: var(--accent-red) !important;
 }
 
 /* ── Port Monitor Panel ─────────────────────────────────────────────────────── */
-.panel-ports h2::before { content: "🔌"; }
 
 .panel-ports {
     grid-column: 1 / -1;  /* full width */
@@ -193,34 +174,28 @@ h2 {
     align-items: center;
     gap: 0.9rem;
     padding: 0.7rem 1rem;
-    background: rgba(0, 0, 0, 0.25);
-    border-radius: 10px;
+    background: transparent;
     border: 1px solid var(--card-border);
-    transition: border-color 0.3s ease;
 }
 
 .port-row:hover {
-    border-color: rgba(255, 255, 255, 0.15);
+    border-color: var(--accent-orange);
 }
 
 /* Status dot */
 .port-status-dot {
     width: 10px;
     height: 10px;
-    border-radius: 50%;
     flex-shrink: 0;
     background: var(--text-muted);
 }
 
 .port-row.alive .port-status-dot {
     background: var(--accent-green);
-    box-shadow: 0 0 8px rgba(63, 185, 80, 0.6);
-    animation: pulse-green 2s ease-in-out infinite;
 }
 
 .port-row.dead .port-status-dot {
     background: var(--accent-red);
-    box-shadow: 0 0 6px rgba(248, 81, 73, 0.4);
 }
 
 .port-row.pending .port-status-dot {
@@ -232,10 +207,9 @@ h2 {
     font-family: 'Courier New', Courier, monospace;
     font-size: 0.8rem;
     font-weight: 700;
-    background: rgba(88, 166, 255, 0.1);
+    background: transparent;
     color: var(--accent-blue);
-    border: 1px solid rgba(88, 166, 255, 0.2);
-    border-radius: 6px;
+    border: 1px solid var(--card-border);
     padding: 0.15rem 0.5rem;
     white-space: nowrap;
 }
@@ -269,9 +243,4 @@ h2 {
     color: var(--text-muted);
     font-size: 0.85rem;
     font-style: italic;
-}
-
-@keyframes pulse-green {
-    0%, 100% { box-shadow: 0 0 4px rgba(63, 185, 80, 0.3); }
-    50%       { box-shadow: 0 0 12px rgba(63, 185, 80, 0.8); }
 }

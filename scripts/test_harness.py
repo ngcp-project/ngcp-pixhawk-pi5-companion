@@ -2,6 +2,11 @@ import json
 import time
 import os
 
+TELEMETRY_PATH = (
+    '/tmp/telemetry.json' if os.name != 'nt'
+    else os.path.join(os.environ.get('TEMP', 'C:\\Temp'), 'telemetry.json')
+)
+
 def run():
     print("Starting mock telemetry harness...")
     for i in range(25):
@@ -21,12 +26,12 @@ def run():
             if i == 5:
                 print("Injected Mock Emergency Stop Command!")
         
-        with open('/tmp/telemetry.json', 'w') as f:
+        with open(TELEMETRY_PATH, 'w') as f:
             json.dump(data, f)
             
         time.sleep(0.5)
     print("Test harness finished.")
 
 if __name__ == "__main__":
-    os.makedirs('/tmp', exist_ok=True)
+    os.makedirs(os.path.dirname(TELEMETRY_PATH), exist_ok=True)
     run()

@@ -1,0 +1,630 @@
+/**
+ * main.js — App Orchestrator (Single Mobile KrakenSDR Model)
+ * ===========================================================
+ * Wires tab routing, settings, playback controls, bearing log, and the
+ * full data pipeline:
+ *   DataFeed -> Triangulation.solve(observation_history) -> MapView + HeatmapView
+ *
+ * Data schema: { observation_history[], current_observation, frequency_hz,
+ *                doa_method, playback: { index, total, speed, paused } }
+ *
+ * Timestamp note:
+ *   "LAST RECEIVED" shows the laptop system clock at the moment the poll
+ *   response arrived — NOT the timestamp in the mock data (which is
+ *   fictional). The server assigns real system-clock timestamps to each
+ *   observation the moment it is first revealed.
+ */
+
+(function () {
+
+    // ── Tab Routing ────────────────────────────────────────────────
+    const tabButtons = document.querySelectorAll('.tab-btn');
+    const tabPanels  = document.querySelectorAll('.tab-panel');
+
+    function switchTab(targetId) {
+        tabButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === targetId));
+        tabPanels.forEach(panel => {
+            panel.classList.toggle('active', panel.id === `panel-${targetId}`);
+        });
+        // Fix: call invalidateSize so Leaflet redraws after hidden→visible
+        if (targetId === 'map')     requestAnimationFrame(() => MapView.invalidateSize());
+    }
+
+    tabButtons.forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+    switchTab('map');
+
+    // ── Settings Wiring ────────────────────────────────────────────
+    const elPollInterval = document.getElementById('setting-poll-interval');
+    const elTile         = document.getElementById('setting-tile');
+    const elUncertainty  = document.getElementById('setting-uncertainty');
+    const elLineLength   = document.getElementById('setting-line-length');
+    const elAlgo         = document.getElementById('setting-algo');
+    const elMinConf      = document.getElementById('setting-min-conf');
+    const elUnits        = document.getElementById('setting-units');
+
+    function bindSetting(el) {
+        if (!el) return;
+        const key = `kraken_setting_${el.id}`;
+        const saved = localStorage.getItem(key);
+        
+        if (saved !== null) {
+            if (el.type === 'checkbox') el.checked = (saved === 'true');
+            else el.value = saved;
+        }
+        
+        el.addEventListener('change', () => {
+            const val = el.type === 'checkbox' ? el.checked : el.value;
+            localStorage.setItem(key, val);
+        });
+    }
+
+    const _allSettings = [elPollInterval, elTile, elUncertainty, elLineLength, elAlgo, elMinConf, elUnits, 
+        document.getElementById('setting-filter-spatial'), 
+        document.getElementById('setting-filter-temporal'), 
+        document.getElementById('setting-filter-attitude'), 
+        document.getElementById('setting-filter-angular')];
+        
+    _allSettings.forEach(bindSetting);
+
+    elPollInterval?.addEventListener('change', () =>
+        DataFeed.setPollInterval(parseInt(elPollInterval.value, 10) || 2000));
+    elTile?.addEventListener('change', () => MapView.setTile(elTile.value));
+    elUncertainty?.addEventListener('change', () => MapView.setShowUncertainty(elUncertainty.checked));
+    elLineLength?.addEventListener('change', () => {
+        const isImp = document.getElementById('setting-units')?.value === 'imperial';
+        let len = parseFloat(elLineLength.value) || 2;
+        if (isImp) len = len * 1.60934;
+        MapView.setLineLength(len);
+        if (_lastData) _processData(_lastData);
+    });
+
+    const elFilterSpatial = document.getElementById('setting-filter-spatial');
+    const elFilterTemporal = document.getElementById('setting-filter-temporal');
+    const elFilterAttitude = document.getElementById('setting-filter-attitude');
+    const elFilterAngular = document.getElementById('setting-filter-angular');
+
+    [elFilterSpatial, elFilterTemporal, elFilterAttitude, elFilterAngular, elAlgo, elMinConf].forEach(el => {
+        el?.addEventListener('change', () => {
+            if (_lastData) _processData(_lastData);
+        });
+    });
+
+    elUnits?.addEventListener('change', () => {
+        MapView.refreshCustomMarkers();
+        
+        const isImperial = elUnits.value === 'imperial';
+        const isPrevImperial = elUnits.dataset.prev === 'imperial';
+        
+        // Sync Mask UI units
+        document.querySelectorAll('.mask-unit-lbl').forEach(lbl => {
+            lbl.textContent = isImperial ? 'mi' : 'km';
+        });
+        
+        const lineLenLbl = document.getElementById('line-length-unit');
+        if (lineLenLbl) lineLenLbl.textContent = isImperial ? 'mi' : 'km';
+        
+        if (elUnits.dataset.prev && isImperial !== isPrevImperial) {
+            // Update line length value directly
+            if (elLineLength) {
+                let v = parseFloat(elLineLength.value);
+                if (!isNaN(v)) {
+                    elLineLength.value = isImperial ? (v / 1.60934).toFixed(1) : (v * 1.60934).toFixed(1);
+                    elLineLength.dispatchEvent(new Event('change'));
+                }
+            }
+        }
+        
+        elUnits.dataset.prev = elUnits.value;
+        if (window._syncMaskUI) window._syncMaskUI();
+        if (_lastData) _processData(_lastData);
+    });
+    // Trigger initial label sync
+    elUnits.dataset.prev = elUnits.value;
+    elUnits?.dispatchEvent(new Event('change'));
+
+    document.getElementById('btn-shutdown')?.addEventListener('click', async () => {
+        if (!confirm("Are you sure you want to stop the background tracking server? You will lose live telemetry. The terminal will exit.")) return;
+        try {
+            await fetch('/api/shutdown', { method: 'POST' });
+            document.body.innerHTML = '<div style="display:flex; height:100vh; align-items:center; justify-content:center; color:#fff; text-align:center; font-family:sans-serif;"><h1>Server Shutdown Successfully. <br><span style="font-size:16px; color:#888;">You can safely close this browser tab.</span></h1></div>';
+            setTimeout(() => window.close(), 500);
+        } catch(e) {}
+    });
+
+    document.getElementById('btn-collapse-obs')?.addEventListener('click', () => {
+        const card = document.getElementById('station-list-card');
+        if (card) card.classList.toggle('obs-collapsed');
+    });
+
+    // ── Heatmap Controls ───────────────────────────────────────────
+    function wireSlider(id, valId, factor, setFn) {
+        const slider = document.getElementById(id);
+        const label  = document.getElementById(valId);
+        if (!slider) return;
+        slider.addEventListener('input', () => {
+            const v = parseInt(slider.value, 10);
+            label.textContent = factor ? (v * factor).toFixed(1) : v;
+            setFn(factor ? v * factor : v);
+        });
+    }
+    wireSlider('hm-radius',  'hm-radius-val',  null, MapView.setHeatRadius);
+    wireSlider('hm-blur',    'hm-blur-val',    null, MapView.setHeatBlur);
+    wireSlider('hm-opacity', 'hm-opacity-val', 0.1,  MapView.setHeatOpacity);
+    document.getElementById('hm-clear-btn')?.addEventListener('click', MapView.clearHeat);
+
+    // ── Global App Logic ───────────────────────────────────────────
+    window._triggerAppUpdate = () => { if (_lastData) _processData(_lastData); };
+
+    document.getElementById('btn-master-clear')?.addEventListener('click', () => {
+        if (!confirm('Clear all logged data, heatmaps, and running observation arrays?')) return;
+        document.getElementById('log-clear-btn')?.click();
+        MapView.clearHeat();
+        if (_lastData && _lastData.observation_history) {
+            _lastData.observation_history = [];
+            _lastData.current_observation = null;
+        }
+        _processData(_lastData);
+    });
+    const syncMenuStates = () => {
+        const maskToggle = document.getElementById('btn-draw-mask-toggle');
+        const polyToggle = document.getElementById('btn-draw-poly-toggle');
+        const maskBlock = document.getElementById('mask-tools-block');
+        const polyBlock = document.getElementById('poly-tools-block');
+        
+        if (maskToggle && polyToggle && maskBlock && polyBlock) {
+            const maskToggleRow = maskToggle.closest('div');
+            const polyToggleRow = polyToggle.closest('div');
+            
+            // Reset state
+            maskBlock.style.opacity = '1'; maskBlock.style.pointerEvents = 'auto';
+            polyBlock.style.opacity = '1'; polyBlock.style.pointerEvents = 'auto';
+            if (maskToggleRow) { maskToggleRow.style.opacity = '1'; maskToggleRow.style.pointerEvents = 'auto'; maskToggle.disabled = false; }
+            if (polyToggleRow) { polyToggleRow.style.opacity = '1'; polyToggleRow.style.pointerEvents = 'auto'; polyToggle.disabled = false; }
+
+            if (maskToggle.checked) {
+                // Dim Poly entirely
+                polyBlock.style.opacity = '0.3'; polyBlock.style.pointerEvents = 'none';
+                if (polyToggleRow) { polyToggleRow.style.opacity = '0.3'; polyToggleRow.style.pointerEvents = 'none'; polyToggle.disabled = true; }
+            } else if (polyToggle.checked) {
+                // Dim Mask entirely
+                maskBlock.style.opacity = '0.3'; maskBlock.style.pointerEvents = 'none';
+                if (maskToggleRow) { maskToggleRow.style.opacity = '0.3'; maskToggleRow.style.pointerEvents = 'none'; maskToggle.disabled = true; }
+            }
+        }
+    };
+
+    document.getElementById('btn-draw-mask-toggle')?.addEventListener('change', (e) => {
+        if (!window.drawDefaultMask) return;
+        if (e.target.checked) {
+            const polyToggle = document.getElementById('btn-draw-poly-toggle');
+            if (polyToggle && polyToggle.checked) {
+                polyToggle.checked = false;
+                if (window.clearPoly) window.clearPoly();
+            }
+            window.drawDefaultMask(null, null); // Trigger interactive crosshair drawing mode immediately
+        } else {
+            if (window.clearMask) window.clearMask();
+        }
+        syncMenuStates();
+    });
+    
+    document.getElementById('btn-draw-poly-toggle')?.addEventListener('change', (e) => {
+        if (!window.drawPolygonMask) return;
+        if (e.target.checked) {
+            const maskToggle = document.getElementById('btn-draw-mask-toggle');
+            if (maskToggle && maskToggle.checked) {
+                maskToggle.checked = false;
+                if (window.clearMask) window.clearMask();
+            }
+            const verts = parseInt(document.getElementById('poly-vertices')?.value || 6);
+            const color = document.getElementById('poly-color')?.value || '#fa8231';
+            window.drawPolygonMask(verts, color);
+        } else {
+            if (window.clearPoly) window.clearPoly();
+        }
+        syncMenuStates();
+    });
+
+    document.getElementById('btn-clear-mask')?.addEventListener('click', () => {
+        const toggle = document.getElementById('btn-draw-mask-toggle');
+        if (toggle) toggle.checked = false;
+        if (window.clearMask) window.clearMask();
+        syncMenuStates();
+    });
+    
+    document.getElementById('btn-clear-poly')?.addEventListener('click', () => {
+        const toggle = document.getElementById('btn-draw-poly-toggle');
+        if (toggle) toggle.checked = false;
+        if (window.clearPoly) window.clearPoly();
+        syncMenuStates();
+    });
+
+    const updatePolyLive = () => {
+        const toggle = document.getElementById('btn-draw-poly-toggle');
+        if (toggle && toggle.checked && window.updatePolyStyle) {
+            const verts = parseInt(document.getElementById('poly-vertices')?.value || 6);
+            const color = document.getElementById('poly-color')?.value || '#fa8231';
+            window.updatePolyStyle(verts, color);
+        }
+    };
+    document.getElementById('poly-vertices')?.addEventListener('change', () => {
+        updatePolyLive();
+        if (window._triggerAppUpdate) window._triggerAppUpdate();
+    });
+    document.getElementById('poly-color')?.addEventListener('input', () => {
+        updatePolyLive();
+    });
+    document.getElementById('poly-lock')?.addEventListener('change', (e) => {
+        if (window.togglePolyLock) window.togglePolyLock(e.target.checked);
+    });
+
+    document.getElementById('btn-clear-all-overlays')?.addEventListener('click', () => {
+        if (window.clearMask) window.clearMask();
+        if (window.clearPoly) window.clearPoly();
+        if (MapView.clearHeat) MapView.clearHeat();
+        
+        const maskToggle = document.getElementById('btn-draw-mask-toggle');
+        if (maskToggle) maskToggle.checked = false;
+        const polyToggle = document.getElementById('btn-draw-poly-toggle');
+        if (polyToggle) polyToggle.checked = false;
+        syncMenuStates();
+    });
+    
+    window._triggerAppUpdate = () => {
+        if (_lastData) _processData(_lastData);
+    };
+
+    // Helper to sync UI fields with map geometry
+    window._syncMaskUI = (overrideBounds = null) => {
+        const bounds = overrideBounds || (typeof window.getMaskBounds === 'function' ? window.getMaskBounds() : null);
+        if (!bounds) return;
+        
+        const isImperial = (document.getElementById('setting-units')?.value === 'imperial');
+        const factor = isImperial ? 1609.34 : 1000;
+        
+        // Calculate width/height in chosen units
+        // Simple approximation for short distances
+        const latMid = (bounds.minLat + bounds.maxLat) / 2;
+        const widthM = L.latLng(latMid, bounds.minLon).distanceTo(L.latLng(latMid, bounds.maxLon));
+        const heightM = L.latLng(bounds.minLat, bounds.minLon).distanceTo(L.latLng(bounds.maxLat, bounds.minLon));
+        
+        const elW = document.getElementById('mask-width');
+        const elH = document.getElementById('mask-height');
+        if (elW) elW.value = (widthM / factor).toFixed(2);
+        if (elH) elH.value = (heightM / factor).toFixed(2);
+    };
+
+    const updateMaskFromInputs = () => {
+        const widthVal = document.getElementById('mask-width')?.value;
+        const heightVal = document.getElementById('mask-height')?.value;
+        if (!widthVal || !heightVal || !window.drawDefaultMask) return;
+        
+        const isImperial = (document.getElementById('setting-units')?.value === 'imperial');
+        const widthMeters = parseFloat(widthVal) * (isImperial ? 1609.34 : 1000);
+        const heightMeters = parseFloat(heightVal) * (isImperial ? 1609.34 : 1000);
+        
+        let oldCenterLat = null;
+        let oldCenterLng = null;
+        if (typeof window.getMaskCenter === 'function') {
+            const c = window.getMaskCenter();
+            if (c) {
+                oldCenterLat = c.lat;
+                oldCenterLng = c.lng;
+            }
+        }
+        
+        if (window.clearMask) window.clearMask();
+        window.drawDefaultMask(widthMeters, heightMeters, '#9b59b6', oldCenterLat, oldCenterLng);
+        const toggle = document.getElementById('btn-draw-mask-toggle');
+        if (toggle) toggle.checked = true;
+    };
+
+    ['mask-width', 'mask-height'].forEach(id => {
+        document.getElementById(id)?.addEventListener('change', updateMaskFromInputs);
+    });
+
+    // ── Playback Controls ──────────────────────────────────────────
+    const pbBar       = document.getElementById('playback-bar');
+    const pbPlayPause = document.getElementById('pb-playpause');
+    const pbRewind    = document.getElementById('pb-rewind');
+    const pbForward   = document.getElementById('pb-forward');
+    const pbReset     = document.getElementById('pb-reset');
+    const pbScrubber  = document.getElementById('pb-scrubber');
+    const pbPosLabel  = document.getElementById('pb-pos-label');
+    const pbSpeed     = document.getElementById('pb-speed');
+
+    let _pbPaused = false;
+
+    async function _pbCommand(action, value) {
+        const body = { action };
+        if (value !== undefined) body.value = value;
+        try {
+            const resp = await fetch('/api/playback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await resp.json();
+            // Immediately process the new state returned by the server
+            if (data?.observation_history) _processData(data);
+            _updatePlaybackUI(data?.playback);
+        } catch (e) {
+            console.warn('[Playback] Command failed:', e);
+        }
+    }
+
+    function _updatePlaybackUI(pb) {
+        if (!pb) {
+            if (pbBar) pbBar.style.display = 'none';
+            return;
+        }
+        if (pbBar) pbBar.style.display = 'flex';
+        _pbPaused = pb.paused;
+        // Play/Pause icon: paused = show play triangle, playing = show pause bars
+        const playSVG = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:16px;height:16px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
+        const pauseSVG = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:14px;height:14px;"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>';
+        pbPlayPause.innerHTML = pb.paused ? playSVG : pauseSVG;
+        pbPlayPause.classList.toggle('paused', !pb.paused);
+        pbPlayPause.title = pb.paused ? 'Play' : 'Pause';
+        // Scrubber
+        pbScrubber.max   = pb.total || 6;
+        pbScrubber.value = pb.index || 1;
+        if (pbPosLabel) pbPosLabel.textContent = `${pb.index} / ${pb.total}`;
+        // Speed
+        if (pbSpeed && pb.speed !== undefined) {
+            pbSpeed.value = pb.speed;
+        }
+    }
+
+    pbPlayPause?.addEventListener('click', () =>
+        _pbCommand(_pbPaused ? 'play' : 'pause'));
+    pbRewind?.addEventListener('click',  () => _pbCommand('rewind'));
+    pbForward?.addEventListener('click', () => _pbCommand('forward'));
+    pbReset?.addEventListener('click',   () => _pbCommand('reset'));
+
+    pbScrubber?.addEventListener('change', () =>
+        _pbCommand('seek', parseInt(pbScrubber.value, 10)));
+
+    pbSpeed?.addEventListener('change', () =>
+        _pbCommand('set_speed', parseFloat(pbSpeed.value)));
+
+    // ── Bearing Log ───────────────────────────────────────────────
+    let _logEntries = [];
+    let _logCounter = 0;
+    let _loggedIds  = new Set();
+
+    document.getElementById('log-clear-btn')?.addEventListener('click', () => {
+        _logEntries = [];
+        _logCounter = 0;
+        _loggedIds.clear();
+        const tbody = document.getElementById('log-body');
+        tbody.innerHTML = '<tr class="log-placeholder"><td colspan="6">Log cleared.</td></tr>';
+        document.getElementById('log-count').textContent = '0 entries';
+    });
+
+    document.getElementById('log-export-btn')?.addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify(_logEntries, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `kraken_bearing_log_${Date.now()}.json`;
+        a.click();
+    });
+
+    function appendNewObservations(data) {
+        const observations = data?.observation_history ?? [];
+        const tbody = document.getElementById('log-body');
+        const placeholder = tbody.querySelector('.log-placeholder');
+        const freqMHz = data?.frequency_hz ? (data.frequency_hz / 1e6).toFixed(4) : '—';
+        let addedAny = false;
+
+        observations.forEach(obs => {
+            if (_loggedIds.has(obs.id)) return;
+            _loggedIds.add(obs.id);
+            addedAny = true;
+            _logCounter++;
+
+            const conf = obs.confidence ?? 0;
+            const confClass = conf >= 0.8 ? 'conf-high' : conf >= 0.5 ? 'conf-med' : 'conf-low';
+            // Use server-assigned system-clock time (received_at)
+            const time = obs.received_at
+                ? new Date(obs.received_at).toLocaleTimeString()
+                : new Date().toLocaleTimeString();
+
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${_logCounter}</td>
+                <td>${time}</td>
+                <td>${obs.label || obs.id}</td>
+                <td>${obs.bearing_deg.toFixed(1)}&deg;</td>
+                <td class="${confClass}">${(conf * 100).toFixed(0)}%</td>
+                <td>${freqMHz}</td>
+            `;
+            if (placeholder) placeholder.remove();
+            tbody.appendChild(row);
+            _logEntries.push({
+                n: _logCounter, time, id: obs.id,
+                bearing_deg: obs.bearing_deg, confidence: conf,
+                lat: obs.lat, lon: obs.lon, freq_hz: data.frequency_hz,
+            });
+        });
+
+        if (addedAny) {
+            document.getElementById('log-count').textContent = `${_logCounter} entries`;
+        }
+    }
+
+    // ── Sidebar Result Panel ───────────────────────────────────────
+    function updateResultPanel(data, result, displayHistory) {
+        const set = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = val ?? '—';
+        };
+
+        const current = data?.current_observation;
+
+        if (result) {
+            set('res-lat',      result.lat.toFixed(6) + '\u00b0');
+            set('res-lon',      result.lon.toFixed(6) + '\u00b0');
+            
+            const isEmp = document.getElementById('setting-units')?.value === 'imperial';
+            if (isEmp) {
+                const ft = result.residual_m * 3.28084;
+                if (ft >= 5280) set('res-error', (ft / 5280).toFixed(2) + ' mi');
+                else set('res-error', ft.toFixed(1) + ' ft');
+            } else {
+                if (result.residual_m >= 1000) set('res-error', (result.residual_m / 1000).toFixed(2) + ' km');
+                else set('res-error', result.residual_m.toFixed(1) + ' m');
+            }
+            
+            set('res-stations', `${result.stationsUsed} / ${displayHistory.length}`);
+        } else {
+            ['res-lat','res-lon','res-error','res-stations'].forEach(id => set(id, '—'));
+        }
+
+        const freqMHz = data?.frequency_hz ? (data.frequency_hz / 1e6).toFixed(4) + ' MHz' : '—';
+        set('res-freq', freqMHz);
+        set('res-doa',  data?.doa_method ?? '—');
+
+        // LAST RECEIVED = laptop system clock when this poll was processed
+        set('res-timestamp', new Date().toLocaleTimeString());
+
+        // Observation list
+        const stList = document.getElementById('station-list');
+        if (stList && displayHistory.length > 0) {
+            const isCurrent = (obs) => current && obs.id === current.id;
+            // Use reverse to show newest observations at the top of the list for better UX
+            const renderedHtml = [...displayHistory].reverse().map(obs => {
+                const cur = isCurrent(obs);
+                return `<div class="station-item">
+                    <div class="station-dot" style="background:${cur ? '#00e87a' : '#4f8ef7'}"></div>
+                    <span class="station-name" style="${cur ? 'color:#00e87a;font-weight:600' : ''}">
+                        ${cur ? '\u25b6 ' : ''}${obs.label || obs.id}
+                    </span>
+                    <span class="station-bearing">${obs.bearing_deg.toFixed(1)}&deg;</span>
+                </div>`;
+            }).join('');
+            stList.innerHTML = renderedHtml;
+        } else if (stList) {
+            stList.innerHTML = '<p class="placeholder-text">Waiting for observations...</p>';
+        }
+    }
+
+    // ── Core Data Pipeline ─────────────────────────────────────────
+    let _lastData = null;
+
+    const modeBadge = document.getElementById('mode-badge');
+
+    function _processData(data) {
+        _lastData = data;
+
+        // Status Badge and Playback Logic
+        if (data?.source === 'udp_stream') {
+            if (pbBar) pbBar.style.display = 'none';
+            if (modeBadge) {
+                modeBadge.textContent = 'LIVE TELEMETRY';
+                modeBadge.className = 'badge badge-live';
+                modeBadge.style.background = '#00b894';
+                modeBadge.style.color = '#fff';
+                modeBadge.style.border = 'none';
+            }
+        } else if (data?.source === 'mock') {
+            if (pbBar) pbBar.style.display = 'flex';
+            if (modeBadge) {
+                modeBadge.textContent = 'DATA';
+                modeBadge.className = 'badge badge-mock';
+                modeBadge.style.background = '';
+                modeBadge.style.color = '';
+                modeBadge.style.border = '';
+            }
+        }
+
+        // Sync playback UI from embedded state
+        if (data?.playback) _updatePlaybackUI(data.playback);
+
+        let history = data?.observation_history ?? [];
+        const minConf = parseFloat(elMinConf?.value ?? 0.5);
+        
+        // 1. Initial manual pruning (Confidence, Attitude, Temporal)
+        let filtered = history.filter(obs => (obs.confidence ?? 1) >= minConf);
+        
+        if (elFilterAttitude?.checked) {
+            filtered = filtered.filter(obs => {
+                const roll = Math.abs(obs.roll_deg || 0);
+                const pitch = Math.abs(obs.pitch_deg || 0);
+                return roll <= 15.0 && pitch <= 15.0;
+            });
+        }
+        
+        if (elFilterTemporal?.checked) {
+            filtered = filtered.slice(-30);
+        }
+
+        // 2. Fetch spatial AABB mask if active
+        let aabb = null;
+        if (typeof window.getMaskBounds === 'function') {
+            aabb = window.getMaskBounds();
+        }
+        
+        let polyBounds = null;
+        if (typeof window.getPolyBounds === 'function') {
+            polyBounds = window.getPolyBounds();
+        }
+        
+        const config = {
+            filterSpatial: document.getElementById('btn-draw-mask-toggle')?.checked ?? false,
+            filterPoly: document.getElementById('btn-draw-poly-toggle')?.checked ?? false,
+            filterAngular: elFilterAngular?.checked ?? true,
+            aabb: aabb,
+            polyBounds: polyBounds
+        };
+
+        const algo   = elAlgo?.value || 'ls_aoa';
+        let result = filtered.length >= 2 ? Triangulation.solve(filtered, algo, config) : null;
+        
+        // 3. Identify which observations were actually used in the final math (for map dots coloring)
+        let validObs = Triangulation.filterStations(filtered, config);
+        
+        // Strict boundary pruning: if resulting triangulation coordinate forms outside mask, drop it!
+        if (result && aabb) {
+            if (result.lat < aabb.minLat || result.lat > aabb.maxLat || 
+                result.lon < aabb.minLon || result.lon > aabb.maxLon) {
+                result = null;
+            }
+        }
+
+        MapView.update(data, result, validObs);
+
+        if (result) {
+            if (algo === 'bayesian' && result.heatGrid) {
+                MapView.setHeatGrid(result.heatGrid);
+            } else {
+                const avgConf   = validObs.reduce((s, o) => s + (o.confidence ?? 1), 0) / validObs.length;
+                const intensity = Math.min(1.0, (validObs.length / 6) * avgConf);
+                MapView.addHeatPoint(result.lat, result.lon, intensity);
+            }
+            const el = document.getElementById('hm-point-count');
+            if (el) el.textContent = MapView.getHeatPointCount();
+        }
+
+        updateResultPanel(data, result, validObs);
+        appendNewObservations(data);
+    }
+
+    DataFeed.onData(_processData);
+
+    // ── Eager Map Init ─────────────────────────────────────────────
+    requestAnimationFrame(() => {
+        MapView.init('map');
+        
+        // Eagerly apply loaded settings cleanly
+        _allSettings.forEach(el => {
+            if (el && el !== elPollInterval) {
+                el.dispatchEvent(new Event('change'));
+            }
+        });
+        
+        console.log('[App] Maps initialised. Starting data feed...');
+        DataFeed.start();
+    });
+
+})();
