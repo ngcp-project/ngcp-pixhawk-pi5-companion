@@ -161,6 +161,10 @@ def main():
     _cmd_queue: queue.Queue = queue.Queue()
 
     try:
+        # Define destination GCS laptop MAC address.
+        from PacketLibrary.PacketLibrary import PacketLibrary
+        PacketLibrary.SetGCSMACAddress("0013A200424353F7")
+        
         LaunchVehicleXBee(get_xbee_port())
         xb_mode = 'real'
         logger.info(f'VehicleXBee connected on {get_xbee_port()} via InfrastructureInterface.')
