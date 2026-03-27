@@ -188,27 +188,27 @@ def main():
 
             # Map MAVLink data to GCS Telemetry struct
             if msg_type == 'GLOBAL_POSITION_INT':
-                telemetry.current_latitude = msg.lat / 1e7
-                telemetry.current_longitude = msg.lon / 1e7
-                telemetry.altitude = msg.alt / 1000.0 * 3.28084  # mm to feet
+                telemetry.CurrentPositionX = msg.lat / 1e7
+                telemetry.CurrentPositionY = msg.lon / 1e7
+                telemetry.Altitude = msg.alt / 1000.0 * 3.28084  # mm to feet
             elif msg_type == 'VFR_HUD':
-                telemetry.speed = msg.groundspeed * 3.28084  # m/s to ft/s
+                telemetry.Speed = msg.groundspeed * 3.28084  # m/s to ft/s
             elif msg_type == 'ATTITUDE':
-                telemetry.pitch = math.degrees(msg.pitch)
-                telemetry.roll = math.degrees(msg.roll)
-                telemetry.yaw = math.degrees(msg.yaw)
+                telemetry.Pitch = math.degrees(msg.pitch)
+                telemetry.Roll = math.degrees(msg.roll)
+                telemetry.Yaw = math.degrees(msg.yaw)
             elif msg_type == 'SYS_STATUS':
                 # Convert mV to Battery Voltage
                 if hasattr(msg, 'voltage_battery'):
                     raw_battery_mv = msg.voltage_battery
-                    telemetry.battery_life = msg.voltage_battery / 1000.0
+                    telemetry.BatteryLife = msg.voltage_battery / 1000.0
             elif msg_type == 'HEARTBEAT':
                 # Map MAVLink system_status to GCS vehicle_status field.
                 # MAV_STATE: 0=UNINIT, 1=BOOT, 2=CALIBRATING, 3=STANDBY,
                 #            4=ACTIVE, 5=CRITICAL, 6=EMERGENCY, 7=POWEROFF
                 # We map 4=ACTIVE → 1 (nominal), all others → 0 (not ready).
                 mav_state = getattr(msg, 'system_status', 0)
-                telemetry.vehicle_status = 1 if mav_state == 4 else 0
+                telemetry.VehicleStatus = 1 if mav_state == 4 else 0
 
         current_time = time.time()
         
@@ -247,15 +247,15 @@ def main():
         
         # Transmit at set frequency
         if current_time - last_send_time >= send_interval:
-            telemetry.last_updated = int(current_time * 1000) # milliseconds
+            telemetry.LastUpdated = int(current_time * 1000) # milliseconds
             
             # --- DEFAULT GCS FIELDS ---
             # vehicle_status is now updated live from HEARTBEAT.system_status above.
             # patient_status: Needs to be ingested from an external patient monitoring system.
             # message_flag: GCS operational intent (0=No Message, 1=Package Location, 2=Patient Location).
             #               Hardcoded to 0 — MAVLink has no native equivalent.
-            telemetry.message_flag = 0
-            telemetry.patient_status = 0
+            telemetry.MessageFlag = 0
+            telemetry.PatientStatus = 0
             
             # Encode and transmit telemetry over XBee (real or mock).
             try:
@@ -274,16 +274,16 @@ def main():
                 # Dump state for GUI
                 try:
                     state_dump = {
-                        "lat": telemetry.current_latitude,
-                        "lon": telemetry.current_longitude,
-                        "alt": telemetry.altitude,
-                        "speed": telemetry.speed,
-                        "pitch": telemetry.pitch,
-                        "roll": telemetry.roll,
-                        "yaw": telemetry.yaw,
+                        "lat": telemetry.CurrentPositionX,
+                        "lon": telemetry.CurrentPositionY,
+                        "alt": telemetry.Altitude,
+                        "speed": telemetry.Speed,
+                        "pitch": telemetry.Pitch,
+                        "roll": telemetry.Roll,
+                        "yaw": telemetry.Yaw,
                         "battery": raw_battery_mv,
                         "hex_payload": hex_str,
-                        "last_updated": telemetry.last_updated,
+                        "last_updated": telemetry.LastUpdated,
                         "latest_command": latest_command
                     }
                     with open('/tmp/telemetry.json', 'w') as f:
