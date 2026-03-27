@@ -163,7 +163,7 @@ def main():
     try:
         # Define destination GCS laptop MAC address.
         from PacketLibrary.PacketLibrary import PacketLibrary
-        PacketLibrary.SetGCSMACAddress("0013A200424353F7")
+        PacketLibrary.SetGCSMACAddress("000000000000FFFF")
         
         LaunchVehicleXBee(get_xbee_port())
         xb_mode = 'real'
