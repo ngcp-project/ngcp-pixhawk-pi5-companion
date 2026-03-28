@@ -87,59 +87,70 @@ def process_xbee_command(data, mav_connection, logger):
         KeepOut = 4
         PatientLocation = 5
         SearchArea = 6
+    
+    #DEFINE minimum command length
+    class XbeeCommandLength(IntEnum):
+        Heartbeat = 0 #doesn't matter how big heartbeat is
+        EmergencyStop = 3
+        KeepIn = 3
+        KeepOut = 3
+        PatientLocation = 3
+        SearchArea = 3
 
-    if not data or not isinstance(data, bytes) or len(data) == 0:
+    XBEE_RX_DATA_LENGTH = len(data)
+
+    if not data or not isinstance(data, bytes) or XBEE_RX_DATA_LENGTH == 0:
         return None
 
     PAYLOAD_ID = data[0]
     if PAYLOAD_ID != 0x01:  # 0x01 is the GCS TAG_COMMAND
         return None
 
-    if len(data) >= 2:
+    if XBEE_RX_DATA_LENGTH >= 2:
         COMMAND_ID = data[1]
         
-        # Heartbeat Command (ID: 1) — GCS keepalive
-        if COMMAND_ID == Command.Heartbeat:
-            logger.info("Received HEARTBEAT command from GCS")
-            return {"command": "Heartbeat", "timestamp": time.time()}
+    # Heartbeat Command (ID: 1) — GCS keepalive
+    if COMMAND_ID == Command.Heartbeat and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.Heartbeat:
+        logger.info("Received HEARTBEAT command from GCS")
+        return {"command": "Heartbeat", "timestamp": time.time()}
 
-        # Emergency Stop Command (ID: 2, Format: BBB) — per gcs-infrastructure spec
-        if COMMAND_ID == Command.EmergencyStop and len(data) >= 3:
-            status = data[2]
-            action = "ENABLE" if status == 0 else "DISABLE"
-            logger.info(f"Received EMERGENCY STOP command: {action}")
+    # Emergency Stop Command (ID: 2, Format: BBB) — per gcs-infrastructure spec
+    if COMMAND_ID == Command.EmergencyStop and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.EmergencyStop:
+        status = data[2]
+        action = "ENABLE" if status == 0 else "DISABLE"
+        logger.info(f"Received EMERGENCY STOP command: {action}")
 
-            # Send MAV_CMD_DO_FLIGHTTERMINATION (ID: 185) if Enabled
-            if status == 0:
-                logger.info("Sending Flight Termination to MAVLink!")
-                try:
-                    mav_connection.mav.command_long_send(
-                        mav_connection.target_system, mav_connection.target_component,
-                        mavutil.mavlink.MAV_CMD_DO_FLIGHTTERMINATION, 0,
-                        1.0, 0, 0, 0, 0, 0, 0
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send MAVLink command: {e}")
+        # Send MAV_CMD_DO_FLIGHTTERMINATION (ID: 185) if Enabled
+        if status == 0:
+            logger.info("Sending Flight Termination to MAVLink!")
+            try:
+                mav_connection.mav.command_long_send(
+                    mav_connection.target_system, mav_connection.target_component,
+                    mavutil.mavlink.MAV_CMD_DO_FLIGHTTERMINATION, 0,
+                    1.0, 0, 0, 0, 0, 0, 0
+                )
+            except Exception as e:
+                logger.error(f"Failed to send MAVLink command: {e}")
 
-            return {"command": "EmergencyStop", "action": action, "timestamp": time.time()}
-        
-        #KeepIn (not yet implemented)
-        if COMMAND_ID == Command.KeepIn and len(data) >= 3:
-            return None
+        return {"command": "EmergencyStop", "action": action, "timestamp": time.time()}
+    
+    #KeepIn (not yet implemented)
+    if COMMAND_ID == Command.KeepIn and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.KeepIn:
+        return None
 
-        #KeepOut (not yet implemented)
-        if COMMAND_ID == Command.KeepOut and len(data) >= 3:
-            return None
-        
-        #PaitentLocation (not yet implemented)
-        if COMMAND_ID == Command.PatientLocation and len(data) >= 3:
-            return None
-        
-        #Search Area (not yet implemented)
-        if COMMAND_ID == Command.SearchArea and len(data) >= 3:
-            return None
+    #KeepOut (not yet implemented)
+    if COMMAND_ID == Command.KeepOut and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.KeepOut:
+        return None
+    
+    #PaitentLocation (not yet implemented)
+    if COMMAND_ID == Command.PatientLocation and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.PatientLocation:
+        return None
+    
+    #Search Area (not yet implemented)
+    if COMMAND_ID == Command.SearchArea and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.SearchArea:
+        return None
 
-    return None #return None if invalid IDs 
+    return None #return None if invalid IDs OR length of recieved data does not match any of the IDs (error check) 
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
