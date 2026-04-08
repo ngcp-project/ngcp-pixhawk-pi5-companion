@@ -465,6 +465,40 @@ const MapView = (() => {
         });
     };
 
+    window.getSearchAreaSummary = function() {
+        if (_maskPolygon && _maskPoints.length > 0) {
+            const center = _maskCenterMarker ? _maskCenterMarker.getLatLng() : _maskPolygon.getBounds().getCenter();
+            return {
+                isActive: true,
+                center: { lat: center.lat, lon: center.lng },
+                isInside: (lat, lon) => {
+                    const pt = turf.point([lon, lat]);
+                    const poly = getMaskGeoJSON(); // uses internal helper
+                    if (!poly) return false;
+                    return turf.booleanPointInPolygon(pt, poly);
+                }
+            };
+        }
+        if (_polyPolygon && _polyPoints.length > 0) {
+            const center = _polyCenterMarker ? _polyCenterMarker.getLatLng() : _polyPolygon.getBounds().getCenter();
+            return {
+                isActive: true,
+                center: { lat: center.lat, lon: center.lng },
+                isInside: (lat, lon) => {
+                    const pt = turf.point([lon, lat]);
+                    const pts = _polyPoints.map(m => {
+                        const ll = m.getLatLng();
+                        return [ll.lng, ll.lat];
+                    });
+                    if (pts.length < 3) return false;
+                    pts.push(pts[0]);
+                    return turf.booleanPointInPolygon(pt, turf.polygon([pts]));
+                }
+            };
+        }
+        return { isActive: false };
+    };
+
     const TILE_CONFIGS = {
         osm: {
             url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -939,12 +973,12 @@ const MapView = (() => {
     }
 
     function getMaskGeoJSON() {
-        if (!_maskPolygon || _maskPoints.length < 3) return null;
-        const pts = _maskPoints.map(m => {
-            const ll = m.getLatLng();
+        if (!_maskPolygon) return null;
+        const pts = _maskPolygon.getLatLngs()[0].map(ll => {
             return [ll.lng, ll.lat]; // Turf uses GeoJSON [lng, lat] format
         });
-        pts.push(pts[0]); // close loop
+        if (pts.length < 3) return null;
+        pts.push([pts[0][0], pts[0][1]]); // close loop safely
         return turf.polygon([pts]);
     }
 

@@ -21,14 +21,168 @@
     const tabButtons = document.querySelectorAll('.tab-btn');
     const tabPanels  = document.querySelectorAll('.tab-panel');
 
+    let _estimationMap = null;
+    let _estimationMarkers = null;
+    let _estimationHits = [];
+    let _estIdCounter = 0;
+
+    function initEstimationMap() {
+        if (_estimationMap) {
+            _estimationMap.invalidateSize();
+            return;
+        }
+        _estimationMap = L.map('estimation-map', { zoomControl: true });
+        // Use initial view near equator or something safe until first hit
+        _estimationMap.setView([0, 0], 2);
+        
+        const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        });
+        tileLayer.addTo(_estimationMap);
+        _estimationMarkers = L.layerGroup().addTo(_estimationMap);
+
+        // sync tile layer setting if exists
+        const elTile = document.getElementById('setting-tile');
+        if (elTile && typeof TILE_CONFIGS !== 'undefined') {
+            const tc = TILE_CONFIGS[elTile.value] || TILE_CONFIGS['osm'];
+            tileLayer.setUrl(tc.url);
+        }
+    }
+
     function switchTab(targetId) {
         tabButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === targetId));
         tabPanels.forEach(panel => {
             panel.classList.toggle('active', panel.id === `panel-${targetId}`);
         });
-        // Fix: call invalidateSize so Leaflet redraws after hidden→visible
-        if (targetId === 'map')     requestAnimationFrame(() => MapView.invalidateSize());
+        if (targetId === 'map') requestAnimationFrame(() => MapView.invalidateSize());
+        if (targetId === 'estimation') requestAnimationFrame(() => initEstimationMap());
     }
+
+    function _formatCoord(c) {
+        return c.toFixed(6);
+    }
+
+    function _renderEstimationLog() {
+        const sigContainer = document.getElementById('est-log-significant');
+        const histContainer = document.getElementById('est-log-history');
+        if (!sigContainer || !histContainer) return;
+
+        sigContainer.innerHTML = '';
+        histContainer.innerHTML = '';
+
+        const renderItems = (container, items, isSignificant) => {
+            if (items.length === 0) {
+                container.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted); font-style:italic; padding:8px; text-align:center;">No ${isSignificant ? 'significant' : 'normal'} hits yet.</div>`;
+                return;
+            }
+            items.forEach(hit => {
+                const itemDiv = document.createElement('div');
+                itemDiv.className = `estimation-item ${hit.isSignificant ? 'significant' : ''}`;
+                itemDiv.innerHTML = `
+                    <div class="est-row">
+                        <span>Lat/Lon</span>
+                        <span class="est-val">${_formatCoord(hit.lat)}, ${_formatCoord(hit.lon)}</span>
+                    </div>
+                    <div class="est-row">
+                        <span>Dist to Center</span>
+                        <span class="est-val">${hit.distFeet.toFixed(1)} ft</span>
+                    </div>
+                    <div class="est-row">
+                        <span>Time</span>
+                        <span class="est-val">${new Date(hit.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <div class="est-actions">
+                        <button class="est-btn transmit" data-id="${hit.id}">Transmit</button>
+                        <button class="est-btn delete" data-id="${hit.id}">Delete</button>
+                    </div>
+                `;
+                container.appendChild(itemDiv);
+            });
+        };
+
+        const sigHits = _estimationHits.filter(h => h.isSignificant).reverse();
+        const normHits = _estimationHits.filter(h => !h.isSignificant).reverse();
+
+        renderItems(sigContainer, sigHits, true);
+        renderItems(histContainer, normHits, false);
+
+        // Bind buttons
+        document.querySelectorAll('.est-btn.transmit').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = parseInt(e.target.dataset.id);
+                const hit = _estimationHits.find(h => h.id === id);
+                if (hit) {
+                    console.log(`[Telemetry] TRANSMITTING: ${hit.lat}, ${hit.lon} (Dist: ${hit.distFeet.toFixed(1)}ft)`);
+                    alert(`Transmitted coordinates to GCS: \nLat: ${hit.lat}\nLon: ${hit.lon}`);
+                }
+            });
+        });
+        document.querySelectorAll('.est-btn.delete').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = parseInt(e.target.dataset.id);
+                _estimationHits = _estimationHits.filter(h => h.id !== id);
+                _redrawEstimationMarkers();
+                _renderEstimationLog();
+            });
+        });
+    }
+
+    function _redrawEstimationMarkers() {
+        if (!_estimationMarkers) return;
+        _estimationMarkers.clearLayers();
+        _estimationHits.forEach(hit => {
+            const color = hit.isSignificant ? '#00e87a' : '#1e88e5';
+            L.circleMarker([hit.lat, hit.lon], {
+                radius: 6,
+                color: '#fff',
+                weight: 1,
+                fillColor: color,
+                fillOpacity: 1.0
+            }).addTo(_estimationMarkers);
+        });
+    }
+
+    function _addEstimationHit(result, distFeet, isSignificant) {
+        // Prevent duplicate spam if location hasn't moved much (< 1 meter approx)
+        const isSpam = _estimationHits.some(h => {
+            if (Triangulation && Triangulation.distanceMeters) {
+                return Triangulation.distanceMeters(h.lat, h.lon, result.lat, result.lon) < 1.0;
+            }
+            return Math.abs(h.lat - result.lat) < 0.00001 && Math.abs(h.lon - result.lon) < 0.00001;
+        });
+
+        if (isSpam) return;
+
+        const hit = {
+            id: ++_estIdCounter,
+            lat: result.lat,
+            lon: result.lon,
+            distFeet: distFeet,
+            isSignificant: isSignificant,
+            timestamp: Date.now()
+        };
+
+        _estimationHits.push(hit);
+        _redrawEstimationMarkers();
+        _renderEstimationLog();
+        
+        // Auto-pan if we are at map default view [0,0]
+        if (_estimationMap && _estimationMap.getZoom() === 2) {
+            _estimationMap.setView([result.lat, result.lon], 17);
+        }
+    }
+
+    // Set up clear button
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('btn-est-clear-all')?.addEventListener('click', () => {
+            if (confirm("Clear all estimation history?")) {
+                _estimationHits = [];
+                _redrawEstimationMarkers();
+                _renderEstimationLog();
+            }
+        });
+    });
 
     tabButtons.forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
     switchTab('map');
@@ -604,6 +758,18 @@
             }
             const el = document.getElementById('hm-point-count');
             if (el) el.textContent = MapView.getHeatPointCount();
+
+            // ── Estimation Mask & Proximity Flagging ──
+            if (typeof window.getSearchAreaSummary === 'function') {
+                const sa = window.getSearchAreaSummary();
+                if (sa && sa.isActive && sa.center && sa.isInside) {
+                    const isInside = sa.isInside(result.lat, result.lon);
+                    if (isInside) {
+                        const distFeet = Triangulation.distanceFeet ? Triangulation.distanceFeet(result.lat, result.lon, sa.center.lat, sa.center.lon) : 0;
+                        _addEstimationHit(result, distFeet, distFeet <= 250);
+                    }
+                }
+            }
         }
 
         updateResultPanel(data, result, validObs);

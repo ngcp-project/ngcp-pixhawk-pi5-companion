@@ -602,3 +602,52 @@ input[type="checkbox"] { accent-color: var(--accent-blue); width: 16px; height: 
 #btn-collapse-obs {
     transition: transform 0.2s ease;
 }
+
+/* ── Estimation Tab ── */
+.estimation-item {
+    background: var(--surface-lighter);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.estimation-item.significant {
+    border-color: var(--accent-green);
+    background: rgba(0, 232, 122, 0.05); /* very light green tint */
+}
+.est-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+.est-val {
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-weight: 500;
+}
+.est-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+}
+.est-btn {
+    flex: 1;
+    padding: 6px;
+    font-size: 0.75rem;
+}
+.est-btn.transmit {
+    background: rgba(30, 136, 229, 0.1);
+    color: var(--accent-blue);
+    border: 1px solid rgba(30, 136, 229, 0.3);
+}
+.est-btn.transmit:hover { background: rgba(30, 136, 229, 0.2); }
+.est-btn.delete {
+    background: rgba(231, 76, 60, 0.1);
+    color: var(--accent-red);
+    border: 1px solid rgba(231, 76, 60, 0.3);
+}
+.est-btn.delete:hover { background: rgba(231, 76, 60, 0.2); }
