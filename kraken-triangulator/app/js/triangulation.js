@@ -454,6 +454,23 @@ const Triangulation = (() => {
     }
 
     /**
+     * Haversine formula for spherical distance (returns meters)
+     */
+    function distanceMeters(lat1, lon1, lat2, lon2) {
+        const dLat = (lat2 - lat1) * DEG2RAD;
+        const dLon = (lon2 - lon1) * DEG2RAD;
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos(lat1 * DEG2RAD) * Math.cos(lat2 * DEG2RAD) *
+                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return EARTH_R * c;
+    }
+
+    function distanceFeet(lat1, lon1, lat2, lon2) {
+        return distanceMeters(lat1, lon1, lat2, lon2) * 3.28084;
+    }
+
+    /**
      * Public API
      */
     return {
@@ -461,6 +478,8 @@ const Triangulation = (() => {
         midpoint,
         bayesianGrid,
         filterStations,
+        distanceMeters,
+        distanceFeet,
         /**
          * Main entry: picks algorithm based on settings.
          * @param {Array}  stations  — filtered station objects

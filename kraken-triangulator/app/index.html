@@ -62,6 +62,15 @@
                 </svg>
                 Bearing Log
             </button>
+            <button class="tab-btn" data-tab="estimation" id="tab-estimation">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <circle cx="12" cy="12" r="3"/>
+                    <line x1="12" y1="2" x2="12" y2="22"/>
+                    <line x1="2" y1="12" x2="22" y2="12"/>
+                </svg>
+                Estimation Map
+            </button>
             <button class="tab-btn" data-tab="settings" id="tab-settings">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="3"/>
@@ -287,7 +296,47 @@
                 </div>
             </div>
 
-            <!-- Settings Tab -->
+            <!-- ── Estimation Map View ── -->
+            <div class="tab-panel flex-row" id="panel-estimation" style="height:100%; width:100%;">
+                <div id="estimation-map" style="flex:1; height:100%; position:relative; z-index:0;"></div>
+                <div class="sidebar" style="width: 380px; display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="padding: 1rem; border-bottom: 1px solid var(--border-color); background: var(--surface-light);">
+                        <h2 style="margin:0; font-size:1.1rem; color:var(--text-primary);">Estimation Log</h2>
+                        <p style="margin:4px 0 0 0; font-size:0.75rem; color:var(--text-secondary);">Tracking bounds overlapping results &lt;= 250ft</p>
+                    </div>
+                    
+                    <div style="flex:1; overflow-y:auto; padding:0.5rem; display:flex; flex-direction:column; gap:16px;">
+                        
+                        <!-- Significant Container -->
+                        <div>
+                            <h3 style="margin:0 0 8px 0; font-size:0.8rem; letter-spacing:1px; text-transform:uppercase; color:var(--accent-green);">Significant (Priority)</h3>
+                            <div id="est-log-significant" style="display:flex; flex-direction:column; gap:8px;">
+                                <!-- Populated dynamically -->
+                                <div style="font-size:0.75rem; color:var(--text-muted); font-style:italic; padding:8px; text-align:center;">No significant hits yet.</div>
+                            </div>
+                        </div>
+
+                        <!-- Normal Container -->
+                        <div>
+                            <h3 style="margin:0 0 8px 0; font-size:0.8rem; letter-spacing:1px; text-transform:uppercase; color:var(--text-muted);">Estimation History</h3>
+                            <div id="est-log-history" style="display:flex; flex-direction:column; gap:8px;">
+                                <!-- Populated dynamically -->
+                                <div style="font-size:0.75rem; color:var(--text-muted); font-style:italic; padding:8px; text-align:center;">No hits recorded.</div>
+                            </div>
+                        </div>
+
+                    </div>
+                    
+                    <!-- Bottom Controls -->
+                    <div style="padding: 1rem; border-top: 1px solid var(--border-color); background: var(--surface-light);">
+                        <button class="btn-primary" id="btn-est-clear-all" style="width:100%;">
+                            Clear All Hits
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Settings View ── -->
             <div class="tab-panel" id="panel-settings">
                 <div id="settings-container">
                     <div class="settings-section">
