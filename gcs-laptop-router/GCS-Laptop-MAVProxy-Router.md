@@ -29,24 +29,24 @@ We use **MAVProxy** — the same tool already running on the Raspberry Pi 5 comp
 ### Architecture Diagram
 
 ```
-                     ┌──────────────────────────────────────────────┐
-                     │           GCS Windows Laptop                 │
-                     │                                              │
-  RFD-900x USB      │   ┌──────────────────────┐                   │
-  ──────────────────►│   │    MAVProxy Router    │                   │
-  (COM13, 57600bd)   │   │  (launch_gcs_router)  │                   │
-                     │   └──────┬───┬───┬────────┘                   │
-                     │          │   │   │                            │
-                     │          ▼   ▼   ▼                            │
-                     │   ┌──────┐ ┌──────┐ ┌──────┐                  │
-                     │   │:14550│ │:14551│ │:14601│                  │
-                     │   └──┬───┘ └──┬───┘ └──┬───┘                  │
-                     │      │        │        │                      │
-                     │      ▼        ▼        ▼                      │
-                     │  QGround   Kraken    Software                 │
-                     │  Control   Triang.   Team                     │
-                     │            App       Scripts                  │
-                     └──────────────────────────────────────────────┘
+                     ┌─────────────────────────────────────────────────────┐
+                     │              GCS Windows Laptop                     │
+                     │                                                    │
+  RFD-900x USB      │   ┌──────────────────────┐                         │
+  ──────────────────►│   │    MAVProxy Router    │                         │
+  (COM13, 57600bd)   │   │  (launch_gcs_router)  │                         │
+                     │   └──┬───┬───┬───┬────────┘                         │
+                     │      │   │   │   │                                  │
+                     │      ▼   ▼   ▼   ▼                                  │
+                     │   ┌──────┐┌──────┐┌──────┐┌──────┐                  │
+                     │   │:14550││:14551││:14601││:14602│                  │
+                     │   └──┬───┘└──┬───┘└──┬───┘└──┬───┘                  │
+                     │      │       │       │       │                      │
+                     │      ▼       ▼       ▼       ▼                      │
+                     │  QGround  Kraken   Software MRA Fusion              │
+                     │  Control  Triang.  Team     Receiver                │
+                     │           App      Scripts  (STATUSTEXT→UDP)        │
+                     └─────────────────────────────────────────────────────┘
 ```
 
 ### Pre-Allocated UDP Port Map
@@ -55,7 +55,8 @@ We use **MAVProxy** — the same tool already running on the Raspberry Pi 5 comp
 |---|---|---|---|
 | `udp:127.0.0.1:14550` | **QGroundControl** | Raw MAVLink | QGC auto-connects to this port by default. No configuration needed. |
 | `udp:127.0.0.1:14551` | **Kraken Triangulator** | Raw MAVLink | Available for the triangulation backend or any custom Python GCS script. |
-| `udp:127.0.0.1:14601` | **Software Team** | Raw MAVLink | Dedicated port for autonomy scripts, command listeners, and sensor fusion. |
+| `udp:127.0.0.1:14601` | **Software Team** | Raw MAVLink | Dedicated port for autonomy scripts, command listeners, and ground_sender. |
+| `udp:127.0.0.1:14602` | **MRA Fusion Receiver** | Raw MAVLink | `fusion_receiver.py` reassembles chunked STATUSTEXT fusion frames, then forwards translated records to the Kraken Triangulator via UDP. |
 
 > **Important:** All ports use `127.0.0.1` (localhost only). No telemetry is exposed to the network. This is strictly a local fan-out.
 
@@ -80,7 +81,7 @@ We use **MAVProxy** — the same tool already running on the Raspberry Pi 5 comp
 If auto-detection fails, look up the COM port in **Windows Device Manager** → Ports (COM & LPT), then run:
 
 ```powershell
-mavproxy.py --master=COM13 --baudrate=57600 --out=udp:127.0.0.1:14550 --out=udp:127.0.0.1:14551 --out=udp:127.0.0.1:14601
+mavproxy.py --master=COM13 --baudrate=57600 --out=udp:127.0.0.1:14550 --out=udp:127.0.0.1:14551 --out=udp:127.0.0.1:14601 --out=udp:127.0.0.1:14602
 ```
 
 Replace `COM13` with your actual port number.

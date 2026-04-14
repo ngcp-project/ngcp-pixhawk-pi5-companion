@@ -243,6 +243,49 @@ def health():
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
+def _translate_fusion_record(payload):
+    """Auto-detect and translate MRA Software Team fusion records to Kraken schema.
+
+    MRA fusion records (from fusion_receiver.py) use field names like
+    lat_deg, lon_deg, doa_deg, confidence_0_1.  The Kraken observation
+    pipeline expects lat, lon, bearing_deg, confidence.
+
+    If the payload already uses Kraken-native keys it is returned as-is.
+    Returns None if the record should be skipped (usable_for_triangulation=False).
+    """
+    if "kraken_seq" not in payload:
+        return payload   # Already in Kraken-native format
+
+    # Skip records that the fusion pipeline marked as unusable
+    if not payload.get("usable_for_triangulation", True):
+        logger.debug(f"Skipping non-usable fusion record seq={payload.get('kraken_seq')}")
+        return None
+
+    seq = payload["kraken_seq"]
+    ts_ms = payload.get("t_gcs_rx_ms", int(time.time() * 1000))
+
+    translated = {
+        "id":          f"fusion_{seq}",
+        "label":       f"Fusion #{seq}",
+        "lat":         payload["lat_deg"],
+        "lon":         payload["lon_deg"],
+        "bearing_deg": payload["doa_deg"],
+        "confidence":  payload.get("confidence_0_1", 0.5),
+        "received_at": datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+                              .isoformat(timespec='seconds'),
+        # Preserve MRA metadata for debugging / downstream consumers
+        "fusion_meta": {
+            "kraken_seq": seq,
+            "usable": payload.get("usable_for_triangulation", True),
+        },
+    }
+    logger.info(f"Translated fusion record seq={seq}: "
+                f"({translated['lat']:.6f}, {translated['lon']:.6f}) "
+                f"bearing={translated['bearing_deg']:.1f}° "
+                f"conf={translated['confidence']:.2f}")
+    return translated
+
+
 def udp_listener_thread():
     global _live_mode, _live_history, _live_current
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -252,6 +295,12 @@ def udp_listener_thread():
         try:
             data, addr = sock.recvfrom(65535)
             payload = json.loads(data.decode("utf-8"))
+
+            # Translate MRA fusion records to Kraken schema (no-op for native)
+            payload = _translate_fusion_record(payload)
+            if payload is None:
+                continue  # Record was non-usable, skip it
+
             # Ensure it has a system clock stamp
             if 'received_at' not in payload:
                 payload['received_at'] = _now_iso()
