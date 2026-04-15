@@ -29,9 +29,10 @@ TELEMETRY_PATH = (
 
 # ── Mock data for local Windows development / demo ────────────────────────────
 MOCK_PORTS = {
-    "14600": {"name": "gcs_translator.py",    "alive": True,  "frames_sent": 1420},
-    "14601": {"name": "command_listener.py",  "alive": True,  "frames_sent": 892},
-    "14602": {"name": "autonomy_engine.py",   "alive": False, "frames_sent": 245},
+    "14550": {"name": "QGroundControl",        "alive": True,  "frames_sent": 0},
+    "14601": {"name": "gcs_translator.py",     "alive": True,  "frames_sent": 1420},
+    "14605": {"name": "fusion_sender.py",      "alive": False, "frames_sent": 0},
+    "14606": {"name": "fusion_receiver.py",    "alive": True,  "frames_sent": 892},
 }
 
 
