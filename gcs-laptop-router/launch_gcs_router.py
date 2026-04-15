@@ -14,9 +14,14 @@ BAUD_RATE = 57600
 # Target endpoints
 # 14550: QGroundControl (Default)
 # 14551: Kraken Triangulator / Custom Python scripts
-# 14601: Software Team Pipeline (command_listener, ground_sender)
-# 14602: MRA Fusion Receiver (fusion_receiver.py — reassembles fusion STATUSTEXT frames)
-UDP_OUT_PORTS = [14550, 14551, 14601, 14602]
+# 14601: Software Team Pipeline (telemetry_logger, command_listener)
+# 14602: (reserved)
+# 14603: (reserved)
+# 14604: (reserved)
+# 14605: Fusion Sender (Pi 5 side — outbound chunked STATUSTEXT)
+# 14606: Fusion Receiver (GCS side — reassembles fusion frames)
+# 14607–14610: (reserved for future scripts)
+UDP_OUT_PORTS = [14550, 14551] + list(range(14601, 14611))
 
 def find_rfd900_com_port():
     print("Scanning for connected USB Serial Devices (RFD-900x)...")
