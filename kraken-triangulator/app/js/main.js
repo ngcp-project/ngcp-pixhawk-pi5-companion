@@ -1,18 +1,16 @@
 /**
  * main.js — App Orchestrator (Single Mobile KrakenSDR Model)
  * ===========================================================
- * Wires tab routing, settings, playback controls, bearing log, and the
+ * Wires tab routing, settings, bearing log, and the
  * full data pipeline:
  *   DataFeed -> Triangulation.solve(observation_history) -> MapView + HeatmapView
  *
  * Data schema: { observation_history[], current_observation, frequency_hz,
- *                doa_method, playback: { index, total, speed, paused } }
+ *                doa_method }
  *
  * Timestamp note:
  *   "LAST RECEIVED" shows the laptop system clock at the moment the poll
- *   response arrived — NOT the timestamp in the mock data (which is
- *   fictional). The server assigns real system-clock timestamps to each
- *   observation the moment it is first revealed.
+ *   response arrived.
  */
 
 (function () {
@@ -477,70 +475,6 @@
         document.getElementById(id)?.addEventListener('change', updateMaskFromInputs);
     });
 
-    // ── Playback Controls ──────────────────────────────────────────
-    const pbBar       = document.getElementById('playback-bar');
-    const pbPlayPause = document.getElementById('pb-playpause');
-    const pbRewind    = document.getElementById('pb-rewind');
-    const pbForward   = document.getElementById('pb-forward');
-    const pbReset     = document.getElementById('pb-reset');
-    const pbScrubber  = document.getElementById('pb-scrubber');
-    const pbPosLabel  = document.getElementById('pb-pos-label');
-    const pbSpeed     = document.getElementById('pb-speed');
-
-    let _pbPaused = false;
-
-    async function _pbCommand(action, value) {
-        const body = { action };
-        if (value !== undefined) body.value = value;
-        try {
-            const resp = await fetch('/api/playback', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            const data = await resp.json();
-            // Immediately process the new state returned by the server
-            if (data?.observation_history) _processData(data);
-            _updatePlaybackUI(data?.playback);
-        } catch (e) {
-            console.warn('[Playback] Command failed:', e);
-        }
-    }
-
-    function _updatePlaybackUI(pb) {
-        if (!pb) {
-            if (pbBar) pbBar.style.display = 'none';
-            return;
-        }
-        if (pbBar) pbBar.style.display = 'flex';
-        _pbPaused = pb.paused;
-        // Play/Pause icon: paused = show play triangle, playing = show pause bars
-        const playSVG = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:16px;height:16px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
-        const pauseSVG = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:14px;height:14px;"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>';
-        pbPlayPause.innerHTML = pb.paused ? playSVG : pauseSVG;
-        pbPlayPause.classList.toggle('paused', !pb.paused);
-        pbPlayPause.title = pb.paused ? 'Play' : 'Pause';
-        // Scrubber
-        pbScrubber.max   = pb.total || 6;
-        pbScrubber.value = pb.index || 1;
-        if (pbPosLabel) pbPosLabel.textContent = `${pb.index} / ${pb.total}`;
-        // Speed
-        if (pbSpeed && pb.speed !== undefined) {
-            pbSpeed.value = pb.speed;
-        }
-    }
-
-    pbPlayPause?.addEventListener('click', () =>
-        _pbCommand(_pbPaused ? 'play' : 'pause'));
-    pbRewind?.addEventListener('click',  () => _pbCommand('rewind'));
-    pbForward?.addEventListener('click', () => _pbCommand('forward'));
-    pbReset?.addEventListener('click',   () => _pbCommand('reset'));
-
-    pbScrubber?.addEventListener('change', () =>
-        _pbCommand('seek', parseInt(pbScrubber.value, 10)));
-
-    pbSpeed?.addEventListener('change', () =>
-        _pbCommand('set_speed', parseFloat(pbSpeed.value)));
 
     // ── Bearing Log ───────────────────────────────────────────────
     let _logEntries = [];
@@ -671,9 +605,8 @@
     function _processData(data) {
         _lastData = data;
 
-        // Status Badge and Playback Logic
+        // Status Badge
         if (data?.source === 'udp_stream') {
-            if (pbBar) pbBar.style.display = 'none';
             if (modeBadge) {
                 modeBadge.textContent = 'LIVE TELEMETRY';
                 modeBadge.className = 'badge badge-live';
@@ -681,19 +614,15 @@
                 modeBadge.style.color = '#fff';
                 modeBadge.style.border = 'none';
             }
-        } else if (data?.source === 'mock') {
-            if (pbBar) pbBar.style.display = 'flex';
+        } else if (data?.source === 'waiting') {
             if (modeBadge) {
-                modeBadge.textContent = 'DATA';
-                modeBadge.className = 'badge badge-mock';
+                modeBadge.textContent = 'WAITING';
+                modeBadge.className = 'badge badge-waiting';
                 modeBadge.style.background = '';
                 modeBadge.style.color = '';
                 modeBadge.style.border = '';
             }
         }
-
-        // Sync playback UI from embedded state
-        if (data?.playback) _updatePlaybackUI(data.playback);
 
         let history = data?.observation_history ?? [];
         const minConf = parseFloat(elMinConf?.value ?? 0.5);

@@ -38,7 +38,7 @@
                 </div>
             </div>
             <div class="header-right">
-                <div id="mode-badge" class="badge badge-mock">DATA</div>
+                <div id="mode-badge" class="badge badge-waiting">WAITING</div>
                 <div id="health-dot" class="health-dot offline" title="Server connection status"></div>
             </div>
         </header>
@@ -80,44 +80,7 @@
             </button>
         </nav>
 
-        <!-- ── Playback Control Bar (mock mode only) ── -->
-        <div id="playback-bar" style="display:none">
-            <div class="pb-left">
-                <span class="pb-label">DATA PLAYBACK</span>
-            </div>
-            <div class="pb-center">
-                <button class="pb-btn" id="pb-reset" title="Reset to start">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg>
-                </button>
-                <button class="pb-btn" id="pb-rewind" title="Previous waypoint">
-                    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:14px;height:14px;"><polygon points="11 19 2 12 11 5 11 19"></polygon><polygon points="22 19 13 12 22 5 22 19"></polygon></svg>
-                </button>
-                <button class="pb-btn pb-btn-main" id="pb-playpause" title="Play / Pause">
-                    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:16px;height:16px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                </button>
-                <button class="pb-btn" id="pb-forward" title="Next waypoint">
-                    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:14px;height:14px;"><polygon points="13 19 22 12 13 5 13 19"></polygon><polygon points="2 19 11 12 2 5 2 19"></polygon></svg>
-                </button>
-            </div>
-            <div class="pb-progress">
-                <span class="pb-pos" id="pb-pos-label">1 / 6</span>
-                <input type="range" id="pb-scrubber" min="1" max="6" value="1" step="1">
-            </div>
-            <div class="pb-right">
-                <label class="pb-speed-label">Speed
-                    <select id="pb-speed">
-                        <option value="0.5">0.5x</option>
-                        <option value="1" selected>1x</option>
-                        <option value="2">2x</option>
-                        <option value="4">4x</option>
-                        <option value="8">8x</option>
-                        <option value="16">16x</option>
-                        <option value="32">32x</option>
-                        <option value="100">Max Speed (100Hz)</option>
-                    </select>
-                </label>
-            </div>
-        </div>
+
 
         <!-- ── Main Content ── -->
         <main id="main-content">
@@ -433,7 +396,7 @@
                     <div class="settings-section">
                         <h2>About</h2>
                         <p class="about-text">
-                            KrakenSDR Triangulator v0.3.0<br>
+                            KrakenSDR Triangulator v1.0.0 (Live Only)<br>
                             NGCP Pixhawk ↔ Pi 5 Companion — Commander Laptop Tool<br>
                             Built for verifying KrakenSDR DOA bearing estimates.
                         </p>

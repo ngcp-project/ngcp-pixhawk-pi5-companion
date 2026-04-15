@@ -32,11 +32,11 @@ const DataFeed = (() => {
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
             _errorCount = 0;
-            _setHealthStatus(true, data.source === 'live' ? 'live' : 'mock');
+            _setHealthStatus(true, data.source === 'live' || data.source === 'udp_stream' ? 'live' : 'waiting');
             _notifyListeners(data);
         } catch (err) {
             _errorCount++;
-            _setHealthStatus(false, 'mock');
+            _setHealthStatus(false, 'waiting');
             if (_errorCount <= 3) {
                 console.warn(`[DataFeed] Fetch error (${_errorCount}):`, err.message);
             }
@@ -48,8 +48,8 @@ const DataFeed = (() => {
         const badge = document.getElementById('mode-badge');
         if (!dot || !badge) return;
         dot.className  = 'health-dot ' + (online ? 'online' : 'offline');
-        badge.className = 'badge ' + (mode === 'live' ? 'badge-live' : 'badge-mock');
-        badge.textContent = mode === 'live' ? 'LIVE DATA' : 'MOCK DATA';
+        badge.className = 'badge ' + (mode === 'live' ? 'badge-live' : 'badge-waiting');
+        badge.textContent = mode === 'live' ? 'LIVE DATA' : 'WAITING FOR DATA';
     }
 
     return {
