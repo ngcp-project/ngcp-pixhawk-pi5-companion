@@ -61,49 +61,88 @@
         return c.toFixed(6);
     }
 
-    function _renderEstimationLog() {
-        const sigContainer = document.getElementById('est-log-significant');
-        const histContainer = document.getElementById('est-log-history');
-        if (!sigContainer || !histContainer) return;
+    // ── Convergence Computation ─────────────────────────────────
+    function _computeConvergence() {
+        if (_estimationHits.length < 2) return null;
 
-        sigContainer.innerHTML = '';
-        histContainer.innerHTML = '';
+        let totalWeight = 0;
+        let wLat = 0, wLon = 0;
 
-        const renderItems = (container, items, isSignificant) => {
-            if (items.length === 0) {
-                container.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted); font-style:italic; padding:8px; text-align:center;">No ${isSignificant ? 'significant' : 'normal'} hits yet.</div>`;
-                return;
-            }
-            items.forEach(hit => {
-                const itemDiv = document.createElement('div');
-                itemDiv.className = `estimation-item ${hit.isSignificant ? 'significant' : ''}`;
-                itemDiv.innerHTML = `
-                    <div class="est-row">
-                        <span>Lat/Lon</span>
-                        <span class="est-val">${_formatCoord(hit.lat)}, ${_formatCoord(hit.lon)}</span>
-                    </div>
-                    <div class="est-row">
-                        <span>Dist to Center</span>
-                        <span class="est-val">${hit.distFeet.toFixed(1)} ft</span>
-                    </div>
-                    <div class="est-row">
-                        <span>Time</span>
-                        <span class="est-val">${new Date(hit.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                    <div class="est-actions">
-                        <button class="est-btn transmit" data-id="${hit.id}">Transmit</button>
-                        <button class="est-btn delete" data-id="${hit.id}">Delete</button>
-                    </div>
-                `;
-                container.appendChild(itemDiv);
-            });
+        for (const hit of _estimationHits) {
+            // Weight = 1 / residual_m (clamped to avoid division by near-zero)
+            const residual = Math.max(hit.residual_m ?? 1, 0.1);
+            const w = 1.0 / residual;
+            wLat += w * hit.lat;
+            wLon += w * hit.lon;
+            totalWeight += w;
+        }
+
+        const cLat = wLat / totalWeight;
+        const cLon = wLon / totalWeight;
+
+        // Weighted standard deviation (spread) in meters
+        let wSumSqDist = 0;
+        for (const hit of _estimationHits) {
+            const residual = Math.max(hit.residual_m ?? 1, 0.1);
+            const w = 1.0 / residual;
+            const distM = Triangulation.distanceMeters(cLat, cLon, hit.lat, hit.lon);
+            wSumSqDist += w * distM * distM;
+        }
+        const spreadM = Math.sqrt(wSumSqDist / totalWeight);
+
+        return {
+            lat: cLat,
+            lon: cLon,
+            spreadM: spreadM,
+            count: _estimationHits.length
         };
+    }
 
-        const sigHits = _estimationHits.filter(h => h.isSignificant).reverse();
-        const normHits = _estimationHits.filter(h => !h.isSignificant).reverse();
+    function _renderEstimationLog() {
+        const histContainer = document.getElementById('est-log-history');
+        const hitCountEl = document.getElementById('est-hit-count');
+        if (!histContainer) return;
 
-        renderItems(sigContainer, sigHits, true);
-        renderItems(histContainer, normHits, false);
+        const convergenceEnabled = document.getElementById('setting-convergence')?.checked ?? true;
+
+        // ── Update Converged Estimate Card ──
+        _updateConvergedCard(convergenceEnabled);
+
+        // ── Render Hit Log ──
+        histContainer.innerHTML = '';
+        if (hitCountEl) hitCountEl.textContent = `${_estimationHits.length} hits`;
+
+        if (_estimationHits.length === 0) {
+            histContainer.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted); font-style:italic; padding:8px; text-align:center;">No hits recorded inside search area.</div>`;
+            return;
+        }
+
+        const normHits = [..._estimationHits].reverse();
+
+        normHits.forEach(hit => {
+            const itemDiv = document.createElement('div');
+            itemDiv.className = `estimation-item significant`;
+            const residualLabel = hit.residual_m != null ? hit.residual_m.toFixed(1) + ' m' : '—';
+            itemDiv.innerHTML = `
+                <div class="est-row">
+                    <span>Lat/Lon</span>
+                    <span class="est-val">${_formatCoord(hit.lat)}, ${_formatCoord(hit.lon)}</span>
+                </div>
+                <div class="est-row">
+                    <span>Residual</span>
+                    <span class="est-val">${residualLabel}</span>
+                </div>
+                <div class="est-row">
+                    <span>Time</span>
+                    <span class="est-val">${new Date(hit.timestamp).toLocaleTimeString()}</span>
+                </div>
+                <div class="est-actions">
+                    <button class="est-btn transmit" data-id="${hit.id}">Transmit</button>
+                    <button class="est-btn delete" data-id="${hit.id}">Delete</button>
+                </div>
+            `;
+            histContainer.appendChild(itemDiv);
+        });
 
         // Bind buttons
         document.querySelectorAll('.est-btn.transmit').forEach(btn => {
@@ -111,7 +150,7 @@
                 const id = parseInt(e.target.dataset.id);
                 const hit = _estimationHits.find(h => h.id === id);
                 if (hit) {
-                    console.log(`[Telemetry] TRANSMITTING: ${hit.lat}, ${hit.lon} (Dist: ${hit.distFeet.toFixed(1)}ft)`);
+                    console.log(`[Telemetry] TRANSMITTING: ${hit.lat}, ${hit.lon}`);
                     alert(`Transmitted coordinates to GCS: \nLat: ${hit.lat}\nLon: ${hit.lon}`);
                 }
             });
@@ -126,22 +165,103 @@
         });
     }
 
+    function _updateConvergedCard(enabled) {
+        const card = document.getElementById('converged-estimate-card');
+        const badge = document.getElementById('converged-status-badge');
+        const btnTransmit = document.getElementById('btn-conv-transmit');
+        if (!card) return;
+
+        if (!enabled) {
+            card.className = 'converged-card converged-disabled';
+            if (badge) badge.textContent = 'OFF';
+            if (btnTransmit) btnTransmit.disabled = true;
+            return;
+        }
+
+        const conv = _computeConvergence();
+
+        if (!conv) {
+            card.className = 'converged-card converged-active';
+            if (badge) badge.textContent = _estimationHits.length === 0 ? 'WAITING' : '1 HIT';
+            document.getElementById('conv-lat').textContent = _estimationHits.length === 1 ? _estimationHits[0].lat.toFixed(6) + '°' : '—';
+            document.getElementById('conv-lon').textContent = _estimationHits.length === 1 ? _estimationHits[0].lon.toFixed(6) + '°' : '—';
+            document.getElementById('conv-count').textContent = `${_estimationHits.length} hits`;
+            document.getElementById('conv-spread').textContent = '—';
+            if (btnTransmit) btnTransmit.disabled = _estimationHits.length < 1;
+            return;
+        }
+
+        card.className = 'converged-card converged-active';
+        if (badge) badge.textContent = 'LIVE';
+
+        document.getElementById('conv-lat').textContent = conv.lat.toFixed(6) + '°';
+        document.getElementById('conv-lon').textContent = conv.lon.toFixed(6) + '°';
+        document.getElementById('conv-count').textContent = `${conv.count} hits`;
+
+        // Display spread in appropriate units
+        const isImperial = document.getElementById('setting-units')?.value === 'imperial';
+        if (isImperial) {
+            const spreadFt = conv.spreadM * 3.28084;
+            document.getElementById('conv-spread').textContent = spreadFt >= 5280
+                ? `± ${(spreadFt / 5280).toFixed(2)} mi`
+                : `± ${spreadFt.toFixed(1)} ft`;
+        } else {
+            document.getElementById('conv-spread').textContent = conv.spreadM >= 1000
+                ? `± ${(conv.spreadM / 1000).toFixed(2)} km`
+                : `± ${conv.spreadM.toFixed(1)} m`;
+        }
+
+        if (btnTransmit) btnTransmit.disabled = false;
+    }
+
     function _redrawEstimationMarkers() {
         if (!_estimationMarkers) return;
         _estimationMarkers.clearLayers();
+
+        // Individual hit markers
         _estimationHits.forEach(hit => {
-            const color = hit.isSignificant ? '#00e87a' : '#1e88e5';
             L.circleMarker([hit.lat, hit.lon], {
-                radius: 6,
+                radius: 5,
                 color: '#fff',
                 weight: 1,
-                fillColor: color,
-                fillOpacity: 1.0
+                fillColor: '#00e87a',
+                fillOpacity: 0.8
             }).addTo(_estimationMarkers);
         });
+
+        // Converged centroid marker (if enabled and ≥ 2 hits)
+        const convergenceEnabled = document.getElementById('setting-convergence')?.checked ?? true;
+        if (convergenceEnabled) {
+            const conv = _computeConvergence();
+            if (conv) {
+                // Outer glow ring
+                L.circleMarker([conv.lat, conv.lon], {
+                    radius: 14,
+                    color: '#00e87a',
+                    weight: 2,
+                    fillColor: '#00e87a',
+                    fillOpacity: 0.12,
+                    dashArray: '4 4'
+                }).addTo(_estimationMarkers);
+
+                // Inner crosshair dot
+                L.circleMarker([conv.lat, conv.lon], {
+                    radius: 7,
+                    color: '#fff',
+                    weight: 2,
+                    fillColor: '#00e87a',
+                    fillOpacity: 1.0
+                }).addTo(_estimationMarkers)
+                    .bindTooltip(`Converged: ${conv.lat.toFixed(6)}, ${conv.lon.toFixed(6)}`, {
+                        permanent: false,
+                        direction: 'top',
+                        offset: [0, -12]
+                    });
+            }
+        }
     }
 
-    function _addEstimationHit(result, distFeet, isSignificant) {
+    function _addEstimationHit(result) {
         // Prevent duplicate spam if location hasn't moved much (< 1 meter approx)
         const isSpam = _estimationHits.some(h => {
             if (Triangulation && Triangulation.distanceMeters) {
@@ -156,8 +276,7 @@
             id: ++_estIdCounter,
             lat: result.lat,
             lon: result.lon,
-            distFeet: distFeet,
-            isSignificant: isSignificant,
+            residual_m: result.residual_m ?? null,
             timestamp: Date.now()
         };
 
@@ -171,7 +290,7 @@
         }
     }
 
-    // Set up clear button
+    // Set up clear button and converged transmit
     document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('btn-est-clear-all')?.addEventListener('click', () => {
             if (confirm("Clear all estimation history?")) {
@@ -180,19 +299,37 @@
                 _renderEstimationLog();
             }
         });
+
+        // Converged Estimate transmit button
+        document.getElementById('btn-conv-transmit')?.addEventListener('click', () => {
+            const convergenceEnabled = document.getElementById('setting-convergence')?.checked ?? true;
+            if (!convergenceEnabled) return;
+
+            const conv = _computeConvergence();
+            if (conv) {
+                console.log(`[Telemetry] TRANSMITTING CONVERGED: ${conv.lat}, ${conv.lon} (±${conv.spreadM.toFixed(1)}m, ${conv.count} hits)`);
+                alert(`Transmitted CONVERGED coordinates to GCS:\nLat: ${conv.lat.toFixed(6)}\nLon: ${conv.lon.toFixed(6)}\nSpread: ±${conv.spreadM.toFixed(1)}m\nBased on: ${conv.count} hits`);
+            } else if (_estimationHits.length === 1) {
+                // Single hit — transmit directly
+                const hit = _estimationHits[0];
+                console.log(`[Telemetry] TRANSMITTING SINGLE: ${hit.lat}, ${hit.lon}`);
+                alert(`Transmitted coordinates to GCS:\nLat: ${hit.lat.toFixed(6)}\nLon: ${hit.lon.toFixed(6)}`);
+            }
+        });
     });
 
     tabButtons.forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
     switchTab('map');
 
     // ── Settings Wiring ────────────────────────────────────────────
-    const elPollInterval = document.getElementById('setting-poll-interval');
-    const elTile         = document.getElementById('setting-tile');
-    const elUncertainty  = document.getElementById('setting-uncertainty');
-    const elLineLength   = document.getElementById('setting-line-length');
-    const elAlgo         = document.getElementById('setting-algo');
-    const elMinConf      = document.getElementById('setting-min-conf');
-    const elUnits        = document.getElementById('setting-units');
+    const elPollInterval  = document.getElementById('setting-poll-interval');
+    const elTile          = document.getElementById('setting-tile');
+    const elUncertainty   = document.getElementById('setting-uncertainty');
+    const elLineLength    = document.getElementById('setting-line-length');
+    const elAlgo          = document.getElementById('setting-algo');
+    const elMinConf       = document.getElementById('setting-min-conf');
+    const elUnits         = document.getElementById('setting-units');
+    const elConvergence   = document.getElementById('setting-convergence');
 
     function bindSetting(el) {
         if (!el) return;
@@ -214,9 +351,15 @@
         document.getElementById('setting-filter-spatial'), 
         document.getElementById('setting-filter-temporal'), 
         document.getElementById('setting-filter-attitude'), 
-        document.getElementById('setting-filter-angular')];
+        document.getElementById('setting-filter-angular'),
+        elConvergence];
         
     _allSettings.forEach(bindSetting);
+
+    // Convergence toggle → immediately re-render estimation UI
+    elConvergence?.addEventListener('change', () => {
+        _renderEstimationLog();
+    });
 
     elPollInterval?.addEventListener('change', () =>
         DataFeed.setPollInterval(parseInt(elPollInterval.value, 10) || 2000));
@@ -694,8 +837,7 @@
                 if (sa && sa.isActive && sa.center && sa.isInside) {
                     const isInside = sa.isInside(result.lat, result.lon);
                     if (isInside) {
-                        const distFeet = Triangulation.distanceFeet ? Triangulation.distanceFeet(result.lat, result.lon, sa.center.lat, sa.center.lon) : 0;
-                        _addEstimationHit(result, distFeet, distFeet <= 250);
+                        _addEstimationHit(result);
                     }
                 }
             }
