@@ -1,18 +1,16 @@
 /**
  * main.js — App Orchestrator (Single Mobile KrakenSDR Model)
  * ===========================================================
- * Wires tab routing, settings, playback controls, bearing log, and the
+ * Wires tab routing, settings, bearing log, and the
  * full data pipeline:
  *   DataFeed -> Triangulation.solve(observation_history) -> MapView + HeatmapView
  *
  * Data schema: { observation_history[], current_observation, frequency_hz,
- *                doa_method, playback: { index, total, speed, paused } }
+ *                doa_method }
  *
  * Timestamp note:
  *   "LAST RECEIVED" shows the laptop system clock at the moment the poll
- *   response arrived — NOT the timestamp in the mock data (which is
- *   fictional). The server assigns real system-clock timestamps to each
- *   observation the moment it is first revealed.
+ *   response arrived.
  */
 
 (function () {
@@ -63,49 +61,88 @@
         return c.toFixed(6);
     }
 
-    function _renderEstimationLog() {
-        const sigContainer = document.getElementById('est-log-significant');
-        const histContainer = document.getElementById('est-log-history');
-        if (!sigContainer || !histContainer) return;
+    // ── Convergence Computation ─────────────────────────────────
+    function _computeConvergence() {
+        if (_estimationHits.length < 2) return null;
 
-        sigContainer.innerHTML = '';
-        histContainer.innerHTML = '';
+        let totalWeight = 0;
+        let wLat = 0, wLon = 0;
 
-        const renderItems = (container, items, isSignificant) => {
-            if (items.length === 0) {
-                container.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted); font-style:italic; padding:8px; text-align:center;">No ${isSignificant ? 'significant' : 'normal'} hits yet.</div>`;
-                return;
-            }
-            items.forEach(hit => {
-                const itemDiv = document.createElement('div');
-                itemDiv.className = `estimation-item ${hit.isSignificant ? 'significant' : ''}`;
-                itemDiv.innerHTML = `
-                    <div class="est-row">
-                        <span>Lat/Lon</span>
-                        <span class="est-val">${_formatCoord(hit.lat)}, ${_formatCoord(hit.lon)}</span>
-                    </div>
-                    <div class="est-row">
-                        <span>Dist to Center</span>
-                        <span class="est-val">${hit.distFeet.toFixed(1)} ft</span>
-                    </div>
-                    <div class="est-row">
-                        <span>Time</span>
-                        <span class="est-val">${new Date(hit.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                    <div class="est-actions">
-                        <button class="est-btn transmit" data-id="${hit.id}">Transmit</button>
-                        <button class="est-btn delete" data-id="${hit.id}">Delete</button>
-                    </div>
-                `;
-                container.appendChild(itemDiv);
-            });
+        for (const hit of _estimationHits) {
+            // Weight = 1 / residual_m (clamped to avoid division by near-zero)
+            const residual = Math.max(hit.residual_m ?? 1, 0.1);
+            const w = 1.0 / residual;
+            wLat += w * hit.lat;
+            wLon += w * hit.lon;
+            totalWeight += w;
+        }
+
+        const cLat = wLat / totalWeight;
+        const cLon = wLon / totalWeight;
+
+        // Weighted standard deviation (spread) in meters
+        let wSumSqDist = 0;
+        for (const hit of _estimationHits) {
+            const residual = Math.max(hit.residual_m ?? 1, 0.1);
+            const w = 1.0 / residual;
+            const distM = Triangulation.distanceMeters(cLat, cLon, hit.lat, hit.lon);
+            wSumSqDist += w * distM * distM;
+        }
+        const spreadM = Math.sqrt(wSumSqDist / totalWeight);
+
+        return {
+            lat: cLat,
+            lon: cLon,
+            spreadM: spreadM,
+            count: _estimationHits.length
         };
+    }
 
-        const sigHits = _estimationHits.filter(h => h.isSignificant).reverse();
-        const normHits = _estimationHits.filter(h => !h.isSignificant).reverse();
+    function _renderEstimationLog() {
+        const histContainer = document.getElementById('est-log-history');
+        const hitCountEl = document.getElementById('est-hit-count');
+        if (!histContainer) return;
 
-        renderItems(sigContainer, sigHits, true);
-        renderItems(histContainer, normHits, false);
+        const convergenceEnabled = document.getElementById('setting-convergence')?.checked ?? true;
+
+        // ── Update Converged Estimate Card ──
+        _updateConvergedCard(convergenceEnabled);
+
+        // ── Render Hit Log ──
+        histContainer.innerHTML = '';
+        if (hitCountEl) hitCountEl.textContent = `${_estimationHits.length} hits`;
+
+        if (_estimationHits.length === 0) {
+            histContainer.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted); font-style:italic; padding:8px; text-align:center;">No hits recorded inside search area.</div>`;
+            return;
+        }
+
+        const normHits = [..._estimationHits].reverse();
+
+        normHits.forEach(hit => {
+            const itemDiv = document.createElement('div');
+            itemDiv.className = `estimation-item significant`;
+            const residualLabel = hit.residual_m != null ? hit.residual_m.toFixed(1) + ' m' : '—';
+            itemDiv.innerHTML = `
+                <div class="est-row">
+                    <span>Lat/Lon</span>
+                    <span class="est-val">${_formatCoord(hit.lat)}, ${_formatCoord(hit.lon)}</span>
+                </div>
+                <div class="est-row">
+                    <span>Residual</span>
+                    <span class="est-val">${residualLabel}</span>
+                </div>
+                <div class="est-row">
+                    <span>Time</span>
+                    <span class="est-val">${new Date(hit.timestamp).toLocaleTimeString()}</span>
+                </div>
+                <div class="est-actions">
+                    <button class="est-btn transmit" data-id="${hit.id}">Transmit</button>
+                    <button class="est-btn delete" data-id="${hit.id}">Delete</button>
+                </div>
+            `;
+            histContainer.appendChild(itemDiv);
+        });
 
         // Bind buttons
         document.querySelectorAll('.est-btn.transmit').forEach(btn => {
@@ -113,8 +150,10 @@
                 const id = parseInt(e.target.dataset.id);
                 const hit = _estimationHits.find(h => h.id === id);
                 if (hit) {
-                    console.log(`[Telemetry] TRANSMITTING: ${hit.lat}, ${hit.lon} (Dist: ${hit.distFeet.toFixed(1)}ft)`);
-                    alert(`Transmitted coordinates to GCS: \nLat: ${hit.lat}\nLon: ${hit.lon}`);
+                    console.log(`[Telemetry] TRANSMITTING: ${hit.lat}, ${hit.lon}`);
+                    _transmitToGCS(hit.lat, hit.lon, 0, 1)
+                        .then(() => alert(`Transmitted coordinates to GCS: \nLat: ${hit.lat}\nLon: ${hit.lon}`))
+                        .catch(e => alert(`Transmission failed: ${e}`));
                 }
             });
         });
@@ -128,22 +167,103 @@
         });
     }
 
+    function _updateConvergedCard(enabled) {
+        const card = document.getElementById('converged-estimate-card');
+        const badge = document.getElementById('converged-status-badge');
+        const btnTransmit = document.getElementById('btn-conv-transmit');
+        if (!card) return;
+
+        if (!enabled) {
+            card.className = 'converged-card converged-disabled';
+            if (badge) badge.textContent = 'OFF';
+            if (btnTransmit) btnTransmit.disabled = true;
+            return;
+        }
+
+        const conv = _computeConvergence();
+
+        if (!conv) {
+            card.className = 'converged-card converged-active';
+            if (badge) badge.textContent = _estimationHits.length === 0 ? 'WAITING' : '1 HIT';
+            document.getElementById('conv-lat').textContent = _estimationHits.length === 1 ? _estimationHits[0].lat.toFixed(6) + '°' : '—';
+            document.getElementById('conv-lon').textContent = _estimationHits.length === 1 ? _estimationHits[0].lon.toFixed(6) + '°' : '—';
+            document.getElementById('conv-count').textContent = `${_estimationHits.length} hits`;
+            document.getElementById('conv-spread').textContent = '—';
+            if (btnTransmit) btnTransmit.disabled = _estimationHits.length < 1;
+            return;
+        }
+
+        card.className = 'converged-card converged-active';
+        if (badge) badge.textContent = 'LIVE';
+
+        document.getElementById('conv-lat').textContent = conv.lat.toFixed(6) + '°';
+        document.getElementById('conv-lon').textContent = conv.lon.toFixed(6) + '°';
+        document.getElementById('conv-count').textContent = `${conv.count} hits`;
+
+        // Display spread in appropriate units
+        const isImperial = document.getElementById('setting-units')?.value === 'imperial';
+        if (isImperial) {
+            const spreadFt = conv.spreadM * 3.28084;
+            document.getElementById('conv-spread').textContent = spreadFt >= 5280
+                ? `± ${(spreadFt / 5280).toFixed(2)} mi`
+                : `± ${spreadFt.toFixed(1)} ft`;
+        } else {
+            document.getElementById('conv-spread').textContent = conv.spreadM >= 1000
+                ? `± ${(conv.spreadM / 1000).toFixed(2)} km`
+                : `± ${conv.spreadM.toFixed(1)} m`;
+        }
+
+        if (btnTransmit) btnTransmit.disabled = false;
+    }
+
     function _redrawEstimationMarkers() {
         if (!_estimationMarkers) return;
         _estimationMarkers.clearLayers();
+
+        // Individual hit markers
         _estimationHits.forEach(hit => {
-            const color = hit.isSignificant ? '#00e87a' : '#1e88e5';
             L.circleMarker([hit.lat, hit.lon], {
-                radius: 6,
+                radius: 5,
                 color: '#fff',
                 weight: 1,
-                fillColor: color,
-                fillOpacity: 1.0
+                fillColor: '#00e87a',
+                fillOpacity: 0.8
             }).addTo(_estimationMarkers);
         });
+
+        // Converged centroid marker (if enabled and ≥ 2 hits)
+        const convergenceEnabled = document.getElementById('setting-convergence')?.checked ?? true;
+        if (convergenceEnabled) {
+            const conv = _computeConvergence();
+            if (conv) {
+                // Outer glow ring
+                L.circleMarker([conv.lat, conv.lon], {
+                    radius: 14,
+                    color: '#00e87a',
+                    weight: 2,
+                    fillColor: '#00e87a',
+                    fillOpacity: 0.12,
+                    dashArray: '4 4'
+                }).addTo(_estimationMarkers);
+
+                // Inner crosshair dot
+                L.circleMarker([conv.lat, conv.lon], {
+                    radius: 7,
+                    color: '#fff',
+                    weight: 2,
+                    fillColor: '#00e87a',
+                    fillOpacity: 1.0
+                }).addTo(_estimationMarkers)
+                    .bindTooltip(`Converged: ${conv.lat.toFixed(6)}, ${conv.lon.toFixed(6)}`, {
+                        permanent: false,
+                        direction: 'top',
+                        offset: [0, -12]
+                    });
+            }
+        }
     }
 
-    function _addEstimationHit(result, distFeet, isSignificant) {
+    function _addEstimationHit(result) {
         // Prevent duplicate spam if location hasn't moved much (< 1 meter approx)
         const isSpam = _estimationHits.some(h => {
             if (Triangulation && Triangulation.distanceMeters) {
@@ -158,8 +278,7 @@
             id: ++_estIdCounter,
             lat: result.lat,
             lon: result.lon,
-            distFeet: distFeet,
-            isSignificant: isSignificant,
+            residual_m: result.residual_m ?? null,
             timestamp: Date.now()
         };
 
@@ -173,7 +292,7 @@
         }
     }
 
-    // Set up clear button
+    // Set up clear button and converged transmit
     document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('btn-est-clear-all')?.addEventListener('click', () => {
             if (confirm("Clear all estimation history?")) {
@@ -182,19 +301,41 @@
                 _renderEstimationLog();
             }
         });
+
+        // Converged Estimate transmit button
+        document.getElementById('btn-conv-transmit')?.addEventListener('click', () => {
+            const convergenceEnabled = document.getElementById('setting-convergence')?.checked ?? true;
+            if (!convergenceEnabled) return;
+
+            const conv = _computeConvergence();
+            if (conv) {
+                console.log(`[Telemetry] TRANSMITTING CONVERGED: ${conv.lat}, ${conv.lon} (±${conv.spreadM.toFixed(1)}m, ${conv.count} hits)`);
+                _transmitToGCS(conv.lat, conv.lon, conv.spreadM, conv.count)
+                    .then(() => alert(`Transmitted CONVERGED coordinates to GCS:\nLat: ${conv.lat.toFixed(6)}\nLon: ${conv.lon.toFixed(6)}\nSpread: ±${conv.spreadM.toFixed(1)}m\nBased on: ${conv.count} hits`))
+                    .catch(e => alert(`Transmission failed: ${e}`));
+            } else if (_estimationHits.length === 1) {
+                // Single hit — transmit directly
+                const hit = _estimationHits[0];
+                console.log(`[Telemetry] TRANSMITTING SINGLE: ${hit.lat}, ${hit.lon}`);
+                _transmitToGCS(hit.lat, hit.lon, 0, 1)
+                    .then(() => alert(`Transmitted coordinates to GCS:\nLat: ${hit.lat.toFixed(6)}\nLon: ${hit.lon.toFixed(6)}`))
+                    .catch(e => alert(`Transmission failed: ${e}`));
+            }
+        });
     });
 
     tabButtons.forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
     switchTab('map');
 
     // ── Settings Wiring ────────────────────────────────────────────
-    const elPollInterval = document.getElementById('setting-poll-interval');
-    const elTile         = document.getElementById('setting-tile');
-    const elUncertainty  = document.getElementById('setting-uncertainty');
-    const elLineLength   = document.getElementById('setting-line-length');
-    const elAlgo         = document.getElementById('setting-algo');
-    const elMinConf      = document.getElementById('setting-min-conf');
-    const elUnits        = document.getElementById('setting-units');
+    const elPollInterval  = document.getElementById('setting-poll-interval');
+    const elTile          = document.getElementById('setting-tile');
+    const elUncertainty   = document.getElementById('setting-uncertainty');
+    const elLineLength    = document.getElementById('setting-line-length');
+    const elAlgo          = document.getElementById('setting-algo');
+    const elMinConf       = document.getElementById('setting-min-conf');
+    const elUnits         = document.getElementById('setting-units');
+    const elConvergence   = document.getElementById('setting-convergence');
 
     function bindSetting(el) {
         if (!el) return;
@@ -216,9 +357,15 @@
         document.getElementById('setting-filter-spatial'), 
         document.getElementById('setting-filter-temporal'), 
         document.getElementById('setting-filter-attitude'), 
-        document.getElementById('setting-filter-angular')];
+        document.getElementById('setting-filter-angular'),
+        elConvergence];
         
     _allSettings.forEach(bindSetting);
+
+    // Convergence toggle → immediately re-render estimation UI
+    elConvergence?.addEventListener('change', () => {
+        _renderEstimationLog();
+    });
 
     elPollInterval?.addEventListener('change', () =>
         DataFeed.setPollInterval(parseInt(elPollInterval.value, 10) || 2000));
@@ -477,70 +624,6 @@
         document.getElementById(id)?.addEventListener('change', updateMaskFromInputs);
     });
 
-    // ── Playback Controls ──────────────────────────────────────────
-    const pbBar       = document.getElementById('playback-bar');
-    const pbPlayPause = document.getElementById('pb-playpause');
-    const pbRewind    = document.getElementById('pb-rewind');
-    const pbForward   = document.getElementById('pb-forward');
-    const pbReset     = document.getElementById('pb-reset');
-    const pbScrubber  = document.getElementById('pb-scrubber');
-    const pbPosLabel  = document.getElementById('pb-pos-label');
-    const pbSpeed     = document.getElementById('pb-speed');
-
-    let _pbPaused = false;
-
-    async function _pbCommand(action, value) {
-        const body = { action };
-        if (value !== undefined) body.value = value;
-        try {
-            const resp = await fetch('/api/playback', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            const data = await resp.json();
-            // Immediately process the new state returned by the server
-            if (data?.observation_history) _processData(data);
-            _updatePlaybackUI(data?.playback);
-        } catch (e) {
-            console.warn('[Playback] Command failed:', e);
-        }
-    }
-
-    function _updatePlaybackUI(pb) {
-        if (!pb) {
-            if (pbBar) pbBar.style.display = 'none';
-            return;
-        }
-        if (pbBar) pbBar.style.display = 'flex';
-        _pbPaused = pb.paused;
-        // Play/Pause icon: paused = show play triangle, playing = show pause bars
-        const playSVG = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:16px;height:16px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
-        const pauseSVG = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:14px;height:14px;"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>';
-        pbPlayPause.innerHTML = pb.paused ? playSVG : pauseSVG;
-        pbPlayPause.classList.toggle('paused', !pb.paused);
-        pbPlayPause.title = pb.paused ? 'Play' : 'Pause';
-        // Scrubber
-        pbScrubber.max   = pb.total || 6;
-        pbScrubber.value = pb.index || 1;
-        if (pbPosLabel) pbPosLabel.textContent = `${pb.index} / ${pb.total}`;
-        // Speed
-        if (pbSpeed && pb.speed !== undefined) {
-            pbSpeed.value = pb.speed;
-        }
-    }
-
-    pbPlayPause?.addEventListener('click', () =>
-        _pbCommand(_pbPaused ? 'play' : 'pause'));
-    pbRewind?.addEventListener('click',  () => _pbCommand('rewind'));
-    pbForward?.addEventListener('click', () => _pbCommand('forward'));
-    pbReset?.addEventListener('click',   () => _pbCommand('reset'));
-
-    pbScrubber?.addEventListener('change', () =>
-        _pbCommand('seek', parseInt(pbScrubber.value, 10)));
-
-    pbSpeed?.addEventListener('change', () =>
-        _pbCommand('set_speed', parseFloat(pbSpeed.value)));
 
     // ── Bearing Log ───────────────────────────────────────────────
     let _logEntries = [];
@@ -671,9 +754,8 @@
     function _processData(data) {
         _lastData = data;
 
-        // Status Badge and Playback Logic
+        // Status Badge
         if (data?.source === 'udp_stream') {
-            if (pbBar) pbBar.style.display = 'none';
             if (modeBadge) {
                 modeBadge.textContent = 'LIVE TELEMETRY';
                 modeBadge.className = 'badge badge-live';
@@ -681,19 +763,15 @@
                 modeBadge.style.color = '#fff';
                 modeBadge.style.border = 'none';
             }
-        } else if (data?.source === 'mock') {
-            if (pbBar) pbBar.style.display = 'flex';
+        } else if (data?.source === 'waiting') {
             if (modeBadge) {
-                modeBadge.textContent = 'DATA';
-                modeBadge.className = 'badge badge-mock';
+                modeBadge.textContent = 'WAITING';
+                modeBadge.className = 'badge badge-waiting';
                 modeBadge.style.background = '';
                 modeBadge.style.color = '';
                 modeBadge.style.border = '';
             }
         }
-
-        // Sync playback UI from embedded state
-        if (data?.playback) _updatePlaybackUI(data.playback);
 
         let history = data?.observation_history ?? [];
         const minConf = parseFloat(elMinConf?.value ?? 0.5);
@@ -765,8 +843,7 @@
                 if (sa && sa.isActive && sa.center && sa.isInside) {
                     const isInside = sa.isInside(result.lat, result.lon);
                     if (isInside) {
-                        const distFeet = Triangulation.distanceFeet ? Triangulation.distanceFeet(result.lat, result.lon, sa.center.lat, sa.center.lon) : 0;
-                        _addEstimationHit(result, distFeet, distFeet <= 250);
+                        _addEstimationHit(result);
                     }
                 }
             }
@@ -777,6 +854,18 @@
     }
 
     DataFeed.onData(_processData);
+
+    // ── GCS Bridge ─────────────────────────────────────────────────
+    async function _transmitToGCS(lat, lon, spread, count) {
+        const url = window.location.origin + '/api/transmit';
+        const res = await fetch(url, {
+            method: 'POST',
+            body: JSON.stringify({ lat, lon, spread_m: spread, count })
+        });
+        if (!res.ok) {
+            throw new Error(`Server returned ${res.status}`);
+        }
+    }
 
     // ── Eager Map Init ─────────────────────────────────────────────
     requestAnimationFrame(() => {

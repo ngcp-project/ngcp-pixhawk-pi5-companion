@@ -256,10 +256,28 @@ def main():
             # --- DEFAULT GCS FIELDS ---
             # vehicle_status is now updated live from HEARTBEAT.system_status above.
             # patient_status: Needs to be ingested from an external patient monitoring system.
-            # message_flag: GCS operational intent (0=No Message, 1=Package Location, 2=Patient Location).
-            #               Hardcoded to 0 — MAVLink has no native equivalent.
+            
             telemetry.MessageFlag = 0
             telemetry.PatientStatus = 0
+            
+            # --- KRAKEN GCS BRIDGE ---
+            target_file = Path('/tmp/kraken_gcs_target.json') if os.name != 'nt' else Path(os.environ.get('TEMP', 'C:/Temp')) / 'kraken_gcs_target.json'
+            try:
+                if target_file.exists():
+                    mtime = target_file.stat().st_mtime
+                    if mtime > getattr(telemetry, '_last_target_mtime', 0):
+                        with open(target_file, 'r') as f:
+                            target_data = json.load(f)
+                        telemetry.MessageLat = float(target_data.get('lat', 0.0))
+                        telemetry.MessageLon = float(target_data.get('lon', 0.0))
+                        telemetry._last_target_mtime = mtime
+                        logger.info(f"Loaded new Kraken Target: {telemetry.MessageLat}, {telemetry.MessageLon}")
+                    
+                    # If we have a target loaded, flag it as Patient Location
+                    if getattr(telemetry, '_last_target_mtime', 0) > 0:
+                        telemetry.MessageFlag = 2
+            except Exception as e:
+                logger.error(f"Error reading Kraken target: {e}")
             
             # Encode and transmit telemetry over XBee (real or mock).
             try:
@@ -288,7 +306,10 @@ def main():
                         "battery": raw_battery_mv,
                         "hex_payload": hex_str,
                         "last_updated": telemetry.LastUpdated,
-                        "latest_command": latest_command
+                        "latest_command": latest_command,
+                        "message_flag": telemetry.MessageFlag,
+                        "target_lat": getattr(telemetry, 'MessageLat', 0.0),
+                        "target_lon": getattr(telemetry, 'MessageLon', 0.0)
                     }
                     with open('/tmp/telemetry.json', 'w') as f:
                         json.dump(state_dump, f)

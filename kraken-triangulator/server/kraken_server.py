@@ -241,6 +241,40 @@ def health():
             "total":   len(_waypoints),
         })
 
+@app.route("/api/transmit", methods=["POST"])
+def transmit():
+    """Bridge endpoint from UI to gcs_translator.py"""
+    body = request.get_json(force=True) or {}
+    lat = body.get("lat")
+    lon = body.get("lon")
+    spread_m = body.get("spread_m", 0)
+    count = body.get("count", 1)
+    
+    if lat is None or lon is None:
+        return jsonify({"error": "Missing lat/lon"}), 400
+        
+    payload = {
+        "lat": lat,
+        "lon": lon,
+        "spread_m": spread_m,
+        "count": count,
+        "timestamp": time.time()
+    }
+    
+    # Write to a known file location so gcs_translator.py can read it
+    target_file = Path("/tmp/kraken_gcs_target.json") if os.name != 'nt' else Path(os.environ.get("TEMP", "C:/Temp")) / "kraken_gcs_target.json"
+    
+    try:
+        # Create parent directory if needed
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(target_file, "w") as f:
+            json.dump(payload, f)
+        logger.info(f"Target locked and exported to bridge: {lat}, {lon}")
+        return jsonify({"status": "ok", "message": "Transmitted successfully"})
+    except Exception as e:
+        logger.error(f"Failed to export target: {e}")
+        return jsonify({"error": str(e)}), 500
+
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
 def udp_listener_thread():

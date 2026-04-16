@@ -38,7 +38,7 @@
                 </div>
             </div>
             <div class="header-right">
-                <div id="mode-badge" class="badge badge-mock">DATA</div>
+                <div id="mode-badge" class="badge badge-waiting">WAITING</div>
                 <div id="health-dot" class="health-dot offline" title="Server connection status"></div>
             </div>
         </header>
@@ -80,44 +80,7 @@
             </button>
         </nav>
 
-        <!-- ── Playback Control Bar (mock mode only) ── -->
-        <div id="playback-bar" style="display:none">
-            <div class="pb-left">
-                <span class="pb-label">DATA PLAYBACK</span>
-            </div>
-            <div class="pb-center">
-                <button class="pb-btn" id="pb-reset" title="Reset to start">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg>
-                </button>
-                <button class="pb-btn" id="pb-rewind" title="Previous waypoint">
-                    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:14px;height:14px;"><polygon points="11 19 2 12 11 5 11 19"></polygon><polygon points="22 19 13 12 22 5 22 19"></polygon></svg>
-                </button>
-                <button class="pb-btn pb-btn-main" id="pb-playpause" title="Play / Pause">
-                    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:16px;height:16px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                </button>
-                <button class="pb-btn" id="pb-forward" title="Next waypoint">
-                    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:14px;height:14px;"><polygon points="13 19 22 12 13 5 13 19"></polygon><polygon points="2 19 11 12 2 5 2 19"></polygon></svg>
-                </button>
-            </div>
-            <div class="pb-progress">
-                <span class="pb-pos" id="pb-pos-label">1 / 6</span>
-                <input type="range" id="pb-scrubber" min="1" max="6" value="1" step="1">
-            </div>
-            <div class="pb-right">
-                <label class="pb-speed-label">Speed
-                    <select id="pb-speed">
-                        <option value="0.5">0.5x</option>
-                        <option value="1" selected>1x</option>
-                        <option value="2">2x</option>
-                        <option value="4">4x</option>
-                        <option value="8">8x</option>
-                        <option value="16">16x</option>
-                        <option value="32">32x</option>
-                        <option value="100">Max Speed (100Hz)</option>
-                    </select>
-                </label>
-            </div>
-        </div>
+
 
         <!-- ── Main Content ── -->
         <main id="main-content">
@@ -302,26 +265,47 @@
                 <div class="sidebar" style="width: 380px; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="padding: 1rem; border-bottom: 1px solid var(--border-color); background: var(--surface-light);">
                         <h2 style="margin:0; font-size:1.1rem; color:var(--text-primary);">Estimation Log</h2>
-                        <p style="margin:4px 0 0 0; font-size:0.75rem; color:var(--text-secondary);">Tracking bounds overlapping results &lt;= 250ft</p>
+                        <p style="margin:4px 0 0 0; font-size:0.75rem; color:var(--text-secondary);">Tracking triangulation results inside search area</p>
                     </div>
                     
-                    <div style="flex:1; overflow-y:auto; padding:0.5rem; display:flex; flex-direction:column; gap:16px;">
+                    <div style="flex:1; overflow-y:auto; padding:0.5rem; display:flex; flex-direction:column; gap:12px;">
                         
-                        <!-- Significant Container -->
-                        <div>
-                            <h3 style="margin:0 0 8px 0; font-size:0.8rem; letter-spacing:1px; text-transform:uppercase; color:var(--accent-green);">Significant (Priority)</h3>
-                            <div id="est-log-significant" style="display:flex; flex-direction:column; gap:8px;">
-                                <!-- Populated dynamically -->
-                                <div style="font-size:0.75rem; color:var(--text-muted); font-style:italic; padding:8px; text-align:center;">No significant hits yet.</div>
+                        <!-- Converged Estimate Card -->
+                        <div id="converged-estimate-card" class="converged-card converged-disabled">
+                            <div class="converged-header">
+                                <span class="converged-star">★</span>
+                                <span class="converged-title">CONVERGED ESTIMATE</span>
+                                <span class="converged-badge" id="converged-status-badge">OFF</span>
+                            </div>
+                            <div class="converged-body" id="converged-body">
+                                <div class="converged-row">
+                                    <span class="converged-label">Latitude</span>
+                                    <span class="converged-value mono" id="conv-lat">—</span>
+                                </div>
+                                <div class="converged-row">
+                                    <span class="converged-label">Longitude</span>
+                                    <span class="converged-value mono" id="conv-lon">—</span>
+                                </div>
+                                <div class="converged-row">
+                                    <span class="converged-label">Based On</span>
+                                    <span class="converged-value mono" id="conv-count">— hits</span>
+                                </div>
+                                <div class="converged-row">
+                                    <span class="converged-label">Spread (±)</span>
+                                    <span class="converged-value mono" id="conv-spread">—</span>
+                                </div>
+                                <button class="converged-transmit-btn" id="btn-conv-transmit" disabled>TRANSMIT CONVERGED</button>
                             </div>
                         </div>
 
-                        <!-- Normal Container -->
-                        <div>
-                            <h3 style="margin:0 0 8px 0; font-size:0.8rem; letter-spacing:1px; text-transform:uppercase; color:var(--text-muted);">Estimation History</h3>
+                        <!-- Raw Hit Log -->
+                        <div style="flex:1; display:flex; flex-direction:column;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                <h3 style="margin:0; font-size:0.8rem; letter-spacing:1px; text-transform:uppercase; color:var(--accent-green);">Hit Log</h3>
+                                <span id="est-hit-count" style="font-size:0.7rem; color:var(--text-muted); font-family:'JetBrains Mono',monospace;">0 hits</span>
+                            </div>
                             <div id="est-log-history" style="display:flex; flex-direction:column; gap:8px;">
-                                <!-- Populated dynamically -->
-                                <div style="font-size:0.75rem; color:var(--text-muted); font-style:italic; padding:8px; text-align:center;">No hits recorded.</div>
+                                <div style="font-size:0.75rem; color:var(--text-muted); font-style:italic; padding:8px; text-align:center;">No hits recorded inside search area.</div>
                             </div>
                         </div>
 
@@ -395,6 +379,13 @@
                                 <span class="setting-label">Min. Confidence Threshold</span>
                                 <input type="number" id="setting-min-conf" class="setting-input" value="0.5" min="0" max="1" step="0.05">
                             </label>
+                            <label class="setting-row" title="When enabled, clustered estimation hits are automatically resolved into a single weighted-centroid coordinate using inverse-residual weighting. The converged result appears at the top of the Estimation tab.">
+                                <span class="setting-label">Converge Estimation Results</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-convergence" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </label>
                         </div>
                     <div class="settings-section">
                         <h2>Triangulation Filters</h2>
@@ -433,7 +424,7 @@
                     <div class="settings-section">
                         <h2>About</h2>
                         <p class="about-text">
-                            KrakenSDR Triangulator v0.3.0<br>
+                            KrakenSDR Triangulator v1.6.0 (Live Only)<br>
                             NGCP Pixhawk ↔ Pi 5 Companion — Commander Laptop Tool<br>
                             Built for verifying KrakenSDR DOA bearing estimates.
                         </p>
