@@ -29,10 +29,9 @@ TELEMETRY_PATH = (
 
 # ── Mock data for local Windows development / demo ────────────────────────────
 MOCK_PORTS = {
-    "14550": {"name": "QGroundControl",        "alive": True,  "frames_sent": 0},
-    "14601": {"name": "gcs_translator.py",     "alive": True,  "frames_sent": 1420},
-    "14605": {"name": "fusion_sender.py",      "alive": False, "frames_sent": 0},
-    "14606": {"name": "fusion_receiver.py",    "alive": True,  "frames_sent": 892},
+    "14600": {"name": "gcs_translator.py",    "alive": True,  "frames_sent": 1420},
+    "14601": {"name": "command_listener.py",  "alive": True,  "frames_sent": 892},
+    "14602": {"name": "autonomy_engine.py",   "alive": False, "frames_sent": 245},
 }
 
 
@@ -102,9 +101,9 @@ if __name__ == "__main__":
     os.makedirs(WEB_DIR, exist_ok=True)
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", PORT), TelemetryHandler) as httpd:
-        print(f"GCS Telemetry Monitor  →  http://localhost:{PORT}")
-        print(f"Telemetry endpoint     →  http://localhost:{PORT}/telemetry.json")
-        print(f"Port monitor endpoint  →  http://localhost:{PORT}/ports")
+        print(f"GCS Telemetry Monitor  ->  http://localhost:{PORT}")
+        print(f"Telemetry endpoint     ->  http://localhost:{PORT}/telemetry.json")
+        print(f"Port monitor endpoint  ->  http://localhost:{PORT}/ports")
         print("Press Ctrl+C to stop.\n")
         try:
             httpd.serve_forever()

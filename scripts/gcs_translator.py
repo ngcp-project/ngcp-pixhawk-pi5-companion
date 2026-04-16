@@ -23,7 +23,7 @@ sys.path.append('/home/ngcp25/gcs-infrastructure')
 sys.path.append('/home/ngcp25/gcs-infrastructure/Application')
 sys.path.append('/home/ngcp25/gcs-infrastructure/lib/gcs-packet')
 sys.path.append('/home/ngcp25/gcs-infrastructure/lib/gcs-packet/Packet')
-sys.path.append('/home/ngcp25/gcs-infrastructure/lib/xbee-python')
+sys.path.append('/home/ngcp25/gcs-infrastructure/lib/xbee-python/src')
 try:
     from Packet.Telemetry.Telemetry import Telemetry
     from Infrastructure.InfrastructureInterface import LaunchVehicleXBee, SendTelemetry, ReceiveCommand

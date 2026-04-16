@@ -32,13 +32,12 @@ Updated `MockXBee.retrieve_data()` to set `frame.received_data` and changed `has
 ## 🟡 MEDIUM PRIORITY — Planned Features
 
 ### 4. Automatic UDP Port Registration for External Scripts — ⏸️ DEFERRED
-**Status:** Deferred pending coordination with the **Software Team** (2026-03-11).  
-**Reason:** Switching from hardcoded ports to a hub-based model changes how all external scripts receive MAVLink data. Activating this without prior notice would silently break `command_listener.py` (port 14601).  
-**Update (2026-04-15):** Port 14602 has been freed for Software Team use. The `autonomy_engine.py` placeholder was removed from `gui_server.py`. Current port allocation: 14601 (gcs_translator/command_listener), 14605 (fusion_sender), 14606 (fusion_receiver), 14607–14610 (reserved).  
+**Status:** Deferred pending coordination with the **Software Team and Autonomy Team** (2026-03-11).  
+**Reason:** Switching from hardcoded ports to a hub-based model changes how all external scripts receive MAVLink data. Activating this without prior notice would silently break `command_listener.py` (port 14601) and the Autonomy Engine (port 14602).  
 **Code Status:** `scripts/mavlink_hub.py` is written and tested (7-unit test suite passes), but is **not wired into the launch script**. No changes are active in production.
 
 **Before activating:**
-- Coordinate with Software leads to agree on the migration timeline
+- Coordinate with Software/Autonomy leads to agree on the migration timeline
 - Ensure all consumer scripts are updated to call `register_with_hub()` before switching the launch script
 - Reference the design in `scripts/mavlink_hub.py` and `scripts/test_mavlink_hub.py`
 

@@ -34,6 +34,10 @@ echo "Starting local MAVProxy link..."
   --out=udp:127.0.0.1:14601 \
   --out=udp:127.0.0.1:14602 \
   --out=udp:127.0.0.1:14603 \
+  --out=udp:127.0.0.1:14604 \
+  --out=udp:127.0.0.1:14605 \
+  --out=udp:127.0.0.1:14606 \
+  --out=udp:127.0.0.1:14607 \
   --daemon ${MAVPROXY_EXTRA_ARGS} &
 MAVPROXY_PID=$!
 
