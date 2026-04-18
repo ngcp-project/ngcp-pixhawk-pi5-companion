@@ -25,3 +25,8 @@ ngcp-uav-software/
 kraken-triangulator/
 gcs-desktop-app/
 gcs-infrastructure/
+GCS-Integration-Library-2025-26/
+gcs-infra-temp/
+
+# Log output directories
+logs/
