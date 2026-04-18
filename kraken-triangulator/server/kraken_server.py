@@ -48,6 +48,11 @@ BASE_DIR        = Path(__file__).resolve().parent.parent
 MOCK_FILE_NAME  = os.environ.get("BEARINGS_FILE", "bearings_20260313_154333.json")
 MOCK_DATA_PATH  = BASE_DIR / "data" / MOCK_FILE_NAME
 APP_DIR         = BASE_DIR / "app"
+UPLOAD_DIR      = BASE_DIR / "data" / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# Valid file extensions for replay data
+VALID_REPLAY_EXTS = {".json", ".jsonl"}
 
 # ── App Setup ──────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -92,7 +97,7 @@ def _now_iso():
 def _advance_waypoint():
     """Advance one step if unpaused and enough time has elapsed."""
     global _obs_index, _last_advance_t
-    if _paused:
+    if _paused or not _waypoints:
         return
     effective_interval = BASE_ADVANCE_S / max(_speed, 0.1)
     now = time.time()
@@ -122,6 +127,18 @@ def _build_response():
             "playback":            None
         }
 
+    if not _waypoints:
+        return {
+            "source":              "replay",
+            "frequency_hz":        462637500,
+            "mode":                "replay",
+            "doa_method":          "MUSIC",
+            "current_observation": None,
+            "observation_history": [],
+            "expected_target":     None,
+            "playback": {"index": 0, "total": 0, "speed": _speed, "paused": _paused},
+        }
+
     visible = _waypoints[:_obs_index]
     # Attach system-clock timestamps to each visible observation
     enriched = []
@@ -132,13 +149,13 @@ def _build_response():
         })
     current = enriched[-1] if enriched else None
     return {
-        "source":              "mock",
-        "frequency_hz":        _mock_data.get("frequency_hz", 462637500),
-        "mode":                _mock_data.get("mode", "single_mobile_kraken"),
-        "doa_method":          _mock_data.get("doa_method", "MUSIC"),
+        "source":              "replay",
+        "frequency_hz":        _mock_data.get("frequency_hz", 462637500) if _mock_data else 462637500,
+        "mode":                _mock_data.get("mode", "single_mobile_kraken") if _mock_data else "replay",
+        "doa_method":          _mock_data.get("doa_method", "MUSIC") if _mock_data else "MUSIC",
         "current_observation": current,
         "observation_history": enriched,
-        "expected_target":     _mock_data.get("expected_target"),
+        "expected_target":     _mock_data.get("expected_target") if _mock_data else None,
         "playback": {
             "index":   _obs_index,
             "total":   len(_waypoints),
@@ -170,6 +187,15 @@ def get_bearings():
     with _lock:
         _advance_waypoint()
         return jsonify(_build_response())
+
+@app.route("/api/clear_history", methods=["POST"])
+def clear_history():
+    with _lock:
+        _live_history.clear()
+        global _live_current
+        _live_current = None
+        logger.info("Live history cleared via API")
+    return jsonify({"status": "cleared"})
 
 @app.route("/api/playback", methods=["GET"])
 def get_playback():
@@ -231,7 +257,7 @@ def post_playback():
 
 @app.route("/api/health", methods=["GET"])
 def health():
-    mode = "live" if KRAKEN_API_URL else "mock"
+    mode = "live" if _live_mode else "replay"
     with _lock:
         return jsonify({
             "status":  "ok",
@@ -240,6 +266,148 @@ def health():
             "index":   _obs_index,
             "total":   len(_waypoints),
         })
+
+# ── Replay Mode API ────────────────────────────────────────────────────────────
+
+@app.route("/api/replay/files", methods=["GET"])
+def list_replay_files():
+    """List all valid replay files from data/, data/uploads/, and GCS fusion logs."""
+    files = []
+    # Scan data/ for bearings JSON files
+    data_dir = BASE_DIR / "data"
+    for f in sorted(data_dir.glob("bearings_*.json")):
+        files.append({"name": f.name, "path": str(f.relative_to(BASE_DIR)), "size_kb": round(f.stat().st_size / 1024, 1), "type": "bearings_json"})
+    for f in sorted(data_dir.glob("mock_bearings.json")):
+        files.append({"name": f.name, "path": str(f.relative_to(BASE_DIR)), "size_kb": round(f.stat().st_size / 1024, 1), "type": "bearings_json"})
+    # Scan uploads/
+    for f in sorted(UPLOAD_DIR.iterdir()):
+        if f.suffix in VALID_REPLAY_EXTS:
+            files.append({"name": f.name, "path": str(f.relative_to(BASE_DIR)), "size_kb": round(f.stat().st_size / 1024, 1), "type": "upload"})
+    # Scan GCS fusion logs (common location)
+    gcs_log_dir = BASE_DIR.parent / "ngcp-uav-software" / "src" / "comms" / "logs" / "fusion_gcs"
+    if gcs_log_dir.exists():
+        for f in sorted(gcs_log_dir.glob("fusion_gcs_*.jsonl")):
+            if f.stat().st_size > 0:  # skip empty logs
+                files.append({"name": f.name, "path": str(f), "size_kb": round(f.stat().st_size / 1024, 1), "type": "fusion_gcs_log"})
+    # Scan Pi-side fusion logs
+    pi_log_dir = BASE_DIR.parent / "ngcp-uav-software" / "logs" / "fusion"
+    if pi_log_dir.exists():
+        for f in sorted(pi_log_dir.glob("fusion_*.jsonl")):
+            if f.stat().st_size > 0:
+                files.append({"name": f.name, "path": str(f), "size_kb": round(f.stat().st_size / 1024, 1), "type": "pi_fusion_log"})
+    return jsonify({"files": files})
+
+@app.route("/api/replay/upload", methods=["POST"])
+def upload_replay_file():
+    """Upload a bearings JSON or fusion JSONL file for replay."""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file in request"}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({"error": "Empty filename"}), 400
+    ext = Path(f.filename).suffix.lower()
+    if ext not in VALID_REPLAY_EXTS:
+        return jsonify({"error": f"Invalid file type '{ext}'. Accepted: {', '.join(VALID_REPLAY_EXTS)}"}), 400
+    dest = UPLOAD_DIR / f.filename
+    f.save(str(dest))
+    logger.info(f"Uploaded replay file: {dest}")
+    return jsonify({"status": "ok", "name": f.filename, "size_kb": round(dest.stat().st_size / 1024, 1)})
+
+def _load_replay_jsonl(path):
+    """Load a fusion JSONL log and convert records to waypoint_sequence format."""
+    global _mock_data, _waypoints, _obs_index, _last_advance_t, _obs_timestamps
+    waypoints = []
+    with open(path, encoding='utf-8') as fh:
+        for idx, line in enumerate(fh):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # Build a waypoint from the fusion record
+            wp = {
+                "id":          f"replay_{idx:05d}",
+                "label":       f"Replay #{idx} | seq={rec.get('kraken_seq', idx)}",
+                "lat":         rec.get("lat_deg", 0),
+                "lon":         rec.get("lon_deg", 0),
+                "bearing_deg": rec.get("doa_deg", 0),
+                "confidence":  rec.get("confidence_0_1", 0.5),
+            }
+            # Carry forward extra telemetry fields for filtering
+            for key in ("roll_deg", "pitch_deg", "yaw_deg", "ground_speed_ft_s", "altitude_rel_ft"):
+                if key in rec:
+                    wp[key] = rec[key]
+            waypoints.append(wp)
+    _mock_data = {
+        "frequency_hz": 462637500,
+        "mode": "replay",
+        "doa_method": "MUSIC",
+        "waypoint_sequence": waypoints,
+    }
+    _waypoints = waypoints
+    _obs_index = 1
+    _last_advance_t = time.time()
+    _obs_timestamps = {}
+    if _waypoints:
+        _obs_timestamps[_waypoints[0]['id']] = _now_iso()
+    logger.info(f"Loaded {len(_waypoints)} waypoints from JSONL replay: {Path(path).name}")
+
+@app.route("/api/replay/load", methods=["POST"])
+def load_replay():
+    """Switch to replay mode and load a specific file."""
+    global _live_mode, _mock_data, _waypoints, _obs_index, _last_advance_t, _obs_timestamps, _paused, _speed
+    body = request.get_json(force=True) or {}
+    file_path = body.get("path", "")
+    if not file_path:
+        return jsonify({"error": "Missing 'path'"}), 400
+
+    # Resolve path: could be relative to BASE_DIR or absolute
+    p = Path(file_path)
+    if not p.is_absolute():
+        p = BASE_DIR / p
+    if not p.exists():
+        return jsonify({"error": f"File not found: {p}"}), 404
+    if p.suffix.lower() not in VALID_REPLAY_EXTS:
+        return jsonify({"error": f"Invalid file type"}), 400
+
+    with _lock:
+        _live_mode = False
+        _paused = True
+        _speed = 1.0
+        if p.suffix.lower() == '.jsonl':
+            _load_replay_jsonl(str(p))
+        else:
+            _load_mock_from_path(str(p))
+    logger.info(f"REPLAY MODE — Loaded {len(_waypoints)} waypoints from {p.name}")
+    return jsonify({"status": "ok", "total": len(_waypoints), "filename": p.name})
+
+def _load_mock_from_path(path):
+    """Load a bearings JSON file (original format)."""
+    global _mock_data, _waypoints, _obs_index, _last_advance_t, _obs_timestamps
+    with open(path, encoding='utf-8') as fh:
+        _mock_data = json.load(fh)
+    _waypoints = _mock_data.get("waypoint_sequence", [])
+    _obs_index = 1
+    _last_advance_t = time.time()
+    _obs_timestamps = {}
+    if _waypoints:
+        _obs_timestamps[_waypoints[0]['id']] = _now_iso()
+    logger.info(f"Loaded {len(_waypoints)} waypoints from JSON: {Path(path).name}")
+
+@app.route("/api/replay/stop", methods=["POST"])
+def stop_replay():
+    """Switch back to live UDP mode."""
+    global _live_mode, _mock_data, _waypoints, _obs_index, _paused
+    with _lock:
+        _live_mode = True
+        _mock_data = None
+        _waypoints = []
+        _obs_index = 1
+        _paused = False
+    logger.info("Switched back to LIVE UDP mode.")
+    return jsonify({"status": "ok", "mode": "live"})
 
 @app.route("/api/transmit", methods=["POST"])
 def transmit():
@@ -277,15 +445,48 @@ def transmit():
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
+def _translate_fusion_record(payload):
+    """Auto-detect and translate MRA Software Team fusion records to Kraken schema."""
+    if "kraken_seq" not in payload:
+        return payload
+
+    if not payload.get("usable_for_triangulation", True):
+        return None
+
+    seq = payload["kraken_seq"]
+    ts_ms = payload.get("t_gcs_rx_ms", int(time.time() * 1000))
+
+    translated = {
+        "id":          f"fusion_{seq}",
+        "label":       f"Fusion #{seq}",
+        "lat":         payload["lat_deg"],
+        "lon":         payload["lon_deg"],
+        "bearing_deg": payload["doa_deg"],
+        "confidence":  payload.get("confidence_0_1", 0.5),
+        "received_at": datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat(timespec='seconds'),
+        "fusion_meta": {
+            "kraken_seq": seq,
+            "usable": payload.get("usable_for_triangulation", True),
+        },
+    }
+    return translated
+
 def udp_listener_thread():
     global _live_mode, _live_history, _live_current
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("0.0.0.0", UDP_PORT))
     logger.info(f"UDP Telemetry Listener bound to 0.0.0.0:{UDP_PORT}")
     while True:
         try:
             data, addr = sock.recvfrom(65535)
             payload = json.loads(data.decode("utf-8"))
+            
+            # Translate MRA fusion records to Kraken schema
+            payload = _translate_fusion_record(payload)
+            if payload is None:
+                continue
+                
             # Ensure it has a system clock stamp
             if 'received_at' not in payload:
                 payload['received_at'] = _now_iso()
@@ -297,7 +498,8 @@ def udp_listener_thread():
             logger.error(f"UDP parse error: {e}")
 
 if __name__ == "__main__":
-    _load_mock()
+    _live_mode = True
+    logger.info("LIVE UDP MODE FORCED. Mock data disabled.")
     
     # Spin up the background telemetry listener
     threading.Thread(target=udp_listener_thread, daemon=True).start()
@@ -305,6 +507,6 @@ if __name__ == "__main__":
     if KRAKEN_API_URL:
         logger.info(f"LIVE KRAKEN MODE — Proxying KrakenSDR API at {KRAKEN_API_URL}")
     else:
-        logger.info(f"MOCK/UDP MODE — Ready for UDP stream on port {UDP_PORT} or falling back to {len(_waypoints)} waypoints.")
+        logger.info(f"LIVE UDP MODE — Ready for UDP stream on port {UDP_PORT}.")
     logger.info(f"Opening at http://localhost:{PORT}")
     app.run(host="0.0.0.0", port=PORT, debug=False)

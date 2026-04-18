@@ -175,7 +175,7 @@ const MapView = (() => {
     // Mask API
     let _cancelDrawingFn = null;
 
-    window.drawDefaultMask = function(widthMeters = null, heightMeters = null, colorHex = '#00e87a') {
+    window.drawDefaultMask = function(widthMeters = null, heightMeters = null, colorHex = '#00e87a', customLat = null, customLng = null) {
         if (_maskPolygon) return;
         
         _maskColor = colorHex;
@@ -982,9 +982,88 @@ const MapView = (() => {
         return turf.polygon([pts]);
     }
 
+    // ── Ground Truth Layer ──────────────────────────────────────────
+    let _gtLayer = null;
+    let _gtMarkers = [];  // { id, lat, lon, label, marker, circle }
+
+    function _gtIcon() {
+        // Distinctive green crosshair with pulsing outer ring
+        return L.divIcon({
+            className: '',
+            html: `<div style="position:relative; width:24px; height:24px;">
+                <div style="position:absolute; inset:0; border:2px solid #00e87a; border-radius:50%; box-shadow:0 0 10px rgba(0,232,122,0.5); animation: gt-pulse 2s infinite;"></div>
+                <div style="position:absolute; top:50%; left:0; right:0; height:2px; background:#00e87a; transform:translateY(-50%);"></div>
+                <div style="position:absolute; left:50%; top:0; bottom:0; width:2px; background:#00e87a; transform:translateX(-50%);"></div>
+                <div style="position:absolute; top:50%; left:50%; width:6px; height:6px; background:#00e87a; border-radius:50%; transform:translate(-50%,-50%); box-shadow:0 0 6px #00e87a;"></div>
+            </div>
+            <style>@keyframes gt-pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.5; transform:scale(1.15); } }</style>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],
+            popupAnchor: [0, -14],
+        });
+    }
+
+    function addGroundTruth(lat, lon, label) {
+        if (!_map) return null;
+        if (!_gtLayer) _gtLayer = L.layerGroup().addTo(_map);
+
+        const id = Date.now();
+        const marker = L.marker([lat, lon], {
+            icon: _gtIcon(),
+            zIndexOffset: 2000,
+        }).addTo(_gtLayer);
+
+        // Accuracy circle (20m default visual)
+        const circle = L.circle([lat, lon], {
+            radius: 8,
+            color: '#00e87a',
+            weight: 1.5,
+            fillColor: '#00e87a',
+            fillOpacity: 0.08,
+            dashArray: '4 4',
+        }).addTo(_gtLayer);
+
+        const displayLabel = label || `Marker #${_gtMarkers.length + 1}`;
+        marker.bindPopup(`
+            <div style="min-width:140px;">
+                <div class="marker-popup-title" style="color:#00e87a;">${displayLabel}</div>
+                <div class="marker-popup-coords">${lat.toFixed(6)}, ${lon.toFixed(6)}</div>
+                <div style="text-align:center; font-size:0.65rem; color:var(--text-muted); margin-top:4px;">Plotted Coordinate</div>
+            </div>
+        `, { className: 'custom-premium-popup' });
+
+        const obj = { id, lat, lon, label: displayLabel, marker, circle };
+        _gtMarkers.push(obj);
+
+        // Pan to the new marker
+        _map.setView([lat, lon], Math.max(_map.getZoom(), 15));
+
+        return obj;
+    }
+
+    function removeGroundTruth(id) {
+        const idx = _gtMarkers.findIndex(o => o.id === id);
+        if (idx === -1) return;
+        const obj = _gtMarkers[idx];
+        if (obj.marker) obj.marker.remove();
+        if (obj.circle) obj.circle.remove();
+        _gtMarkers.splice(idx, 1);
+    }
+
+    function clearGroundTruth() {
+        if (_gtLayer) _gtLayer.clearLayers();
+        _gtMarkers = [];
+    }
+
+    function getGroundTruthMarkers() {
+        return _gtMarkers.map(o => ({ id: o.id, lat: o.lat, lon: o.lon, label: o.label }));
+    }
+
     return { 
         init, update, setTile, setLineLength, setShowUncertainty, invalidateSize,
         addHeatPoint, clearHeat, setHeatGrid, setHeatRadius, setHeatBlur, setHeatOpacity, getHeatPointCount,
-        getMaskGeoJSON
+        getMaskGeoJSON, refreshCustomMarkers: _refreshCustomMarkers,
+        addGroundTruth, removeGroundTruth, clearGroundTruth, getGroundTruthMarkers,
     };
 })();
+
