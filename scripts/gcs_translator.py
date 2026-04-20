@@ -8,6 +8,10 @@ import struct
 import socket
 import threading
 import queue
+
+from pathlib import Path
+import uuid
+
 from enum import IntEnum
 try:
     from pymavlink import mavutil
@@ -19,11 +23,19 @@ except ImportError:
 # The repo must be cloned to: /home/ngcp25/gcs-infrastructure
 #   git clone https://github.com/ngcp-project/gcs-infrastructure.git /home/ngcp25/gcs-infrastructure
 #
-sys.path.append('/home/ngcp25/gcs-infrastructure')
-sys.path.append('/home/ngcp25/gcs-infrastructure/Application')
-sys.path.append('/home/ngcp25/gcs-infrastructure/lib/gcs-packet')
-sys.path.append('/home/ngcp25/gcs-infrastructure/lib/gcs-packet/Packet')
-sys.path.append('/home/ngcp25/gcs-infrastructure/lib/xbee-python')
+
+#Fix the location of this
+MISSION_STATE_FILE = Path(__file__).resolve().parent / "mission_state.json" 
+
+BASE_DIR = Path(__file__).resolve().parents[2]  # go up to ~/Projects
+GCS_DIR = BASE_DIR / "gcs-infrastructure"
+
+sys.path.append(str(GCS_DIR))
+sys.path.append(str(GCS_DIR / "Application"))
+sys.path.append(str(GCS_DIR / "lib" / "gcs-packet"))
+sys.path.append(str(GCS_DIR / "lib" / "gcs-packet" / "Packet"))
+sys.path.append(str(GCS_DIR / "lib" / "xbee-python"))
+
 try:
     from Packet.Telemetry.Telemetry import Telemetry
     from Infrastructure.InfrastructureInterface import LaunchVehicleXBee, SendTelemetry, ReceiveCommand
@@ -69,60 +81,109 @@ class MockXBee:
     def transmit_data(self, payload, retrieveStatus=False):
         pass
 
+#Functions that load and write to the mission_state.json
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    result = dict(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(result.get(k), dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+def _write_state(updates: dict) -> None:
+    """Atomically merge updates into mission_state.json."""
+    import fcntl
+    try:
+        if not MISSION_STATE_FILE.exists():
+            MISSION_STATE_FILE.write_text(json.dumps({}, indent=2))
+
+        with open(MISSION_STATE_FILE, 'r+') as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            state = json.load(f)
+            state = _deep_merge(state, updates)
+            f.seek(0)
+            json.dump(state, f, indent=2)
+            f.truncate()
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+    except FileNotFoundError:
+        MISSION_STATE_FILE.write_text(json.dumps(updates, indent=2))
+
+    except Exception as e:
+        logger.error(f"[bridge] Failed to write mission_state.json: {e}")
+
+
 def process_xbee_command(data, mav_connection, logger):
-    """Parses custom GCS frame bytes and converts back to MAVLink.
-    Command IDs match VehicleXBee.py in gcs-infrastructure:
-      1 = Heartbeat
-      2 = EmergencyStop  (Format: BBB — PAYLOAD_ID, COMMAND_ID, status)
-      3 = KeepIn         (not yet implemented)
-      4 = KeepOut        (not yet implemented)
-      5 = PatientLocation (not yet implemented)
-      6 = SearchArea      (not yet implemented)
     """
-    #Command ID
-    class Command(IntEnum):
-        Heartbeat = 1
-        EmergencyStop = 2
-        KeepIn = 3
-        KeepOut = 4
-        PatientLocation = 5
-        SearchArea = 6
+    Parse raw XBee bytes and return a command dict.
+    EmergencyStop triggers MAVLink immediately.
+    All other commands are written to mission_state.json via _write_state().
     
-    #DEFINE minimum command length
-    class XbeeCommandLength(IntEnum):
-        Heartbeat = 0 #doesn't matter how big heartbeat is
-        EmergencyStop = 3
-        KeepIn = 3
-        KeepOut = 3
-        PatientLocation = 3
-        SearchArea = 3
+    Command IDs (from gcs-infrastructure VehicleXBee.py):
+      1  = Heartbeat
+      2  = EmergencyStop
+      3  = KeepIn
+      4  = KeepOut
+      5  = PatientLocation
+      6  = SearchArea
+      7  = StartLog
+      8  = StopLog
+      9  = StartAutonomy
+      10 = StopAutonomy
+      11 = RTL
+      12 = Reboot
+      13 = Shutdown
+      14 = NewSearchSession
+      15 = StartSearch
+      16 = StopSearch
+      17 = SetTarget
+    """
+    class Command(IntEnum):
+        Heartbeat        = 1
+        EmergencyStop    = 2
+        KeepIn           = 3
+        KeepOut          = 4
+        PatientLocation  = 5
+        SearchArea       = 6
+        StartLog         = 7
+        StopLog          = 8
+        StartAutonomy    = 9
+        StopAutonomy     = 10
+        RTL              = 11
+        Reboot           = 12
+        Shutdown         = 13
+        NewSearchSession = 14
+        StartSearch      = 15
+        StopSearch       = 16
+        SetTarget        = 17
 
-    XBEE_RX_DATA_LENGTH = len(data)
-
-    if not data or not isinstance(data, bytes) or XBEE_RX_DATA_LENGTH == 0:
+    if not data or not isinstance(data, bytes) or len(data) == 0:
         return None
 
     PAYLOAD_ID = data[0]
-    if PAYLOAD_ID != 0x01:  # 0x01 is the GCS TAG_COMMAND
+    if PAYLOAD_ID != 0x01:
+        return None
+    if len(data) < 2:
         return None
 
-    if XBEE_RX_DATA_LENGTH >= 2:
-        COMMAND_ID = data[1]
-        
-    # Heartbeat Command (ID: 1) — GCS keepalive
-    if COMMAND_ID == Command.Heartbeat and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.Heartbeat:
-        logger.info("Received HEARTBEAT command from GCS")
-        return {"command": "Heartbeat", "timestamp": time.time()}
+    COMMAND_ID = data[1]
+    now = time.time()
 
-    # Emergency Stop Command (ID: 2, Format: BBB) — per gcs-infrastructure spec
-    if COMMAND_ID == Command.EmergencyStop and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.EmergencyStop:
+    # --- Heartbeat ---
+    if COMMAND_ID == Command.Heartbeat:
+        logger.info("[cmd] HEARTBEAT from GCS")
+        return {"command": "Heartbeat", "timestamp": now}
+
+    # --- EmergencyStop (BYPASS: direct MAVLink, no state dependency) ---
+    if COMMAND_ID == Command.EmergencyStop and len(data) >= 3:
         status = data[2]
         action = "ENABLE" if status == 0 else "DISABLE"
-        logger.info(f"Received EMERGENCY STOP command: {action}")
+        logger.warning(f"[cmd] EMERGENCY STOP — {action}")
 
-        # Send MAV_CMD_DO_FLIGHTTERMINATION (ID: 185) if Enabled
         if status == 0:
-            logger.info("Sending Flight Termination to MAVLink!")
+            logger.warning("[cmd] Sending MAV_CMD_DO_FLIGHTTERMINATION!")
             try:
                 mav_connection.mav.command_long_send(
                     mav_connection.target_system, mav_connection.target_component,
@@ -130,27 +191,126 @@ def process_xbee_command(data, mav_connection, logger):
                     1.0, 0, 0, 0, 0, 0, 0
                 )
             except Exception as e:
-                logger.error(f"Failed to send MAVLink command: {e}")
+                logger.error(f"[cmd] MAVLink termination failed: {e}")
 
-        return {"command": "EmergencyStop", "action": action, "timestamp": time.time()}
-    
-    #KeepIn (not yet implemented)
-    if COMMAND_ID == Command.KeepIn and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.KeepIn:
+        # Write to state for audit only — AFTER MAVLink call
+        _write_state({
+            "pending_action": "emergency_stop" if status == 0 else None,
+            "last_command": "EmergencyStop",
+            "timestamp": now,
+        })
+        return {"command": "EmergencyStop", "action": action, "timestamp": now}
+
+    # --- RTL (Return to Launch — MAVLink + state) ---
+    if COMMAND_ID == Command.RTL:
+        logger.warning("[cmd] RTL requested")
+        try:
+            mav_connection.mav.command_long_send(
+                mav_connection.target_system, mav_connection.target_component,
+                mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0,
+                0, 0, 0, 0, 0, 0, 0
+            )
+        except Exception as e:
+            logger.error(f"[cmd] MAVLink RTL failed: {e}")
+        _write_state({"rtl_requested": True, "last_command": "RTL", "timestamp": now})
+        return {"command": "RTL", "timestamp": now}
+
+    # --- Logging Control ---
+    if COMMAND_ID == Command.StartLog:
+        logger.info("[cmd] StartLog")
+        _write_state({"logging_enabled": True, "last_command": "StartLog", "timestamp": now})
+        return {"command": "StartLog", "timestamp": now}
+
+    if COMMAND_ID == Command.StopLog:
+        logger.info("[cmd] StopLog")
+        _write_state({"logging_enabled": False, "last_command": "StopLog", "timestamp": now})
+        return {"command": "StopLog", "timestamp": now}
+
+    # --- Autonomy Control ---
+    if COMMAND_ID == Command.StartAutonomy:
+        logger.info("[cmd] StartAutonomy")
+        _write_state({"autonomy_active": True, "last_command": "StartAutonomy", "timestamp": now})
+        return {"command": "StartAutonomy", "timestamp": now}
+
+    if COMMAND_ID == Command.StopAutonomy:
+        logger.info("[cmd] StopAutonomy")
+        _write_state({"autonomy_active": False, "last_command": "StopAutonomy", "timestamp": now})
+        return {"command": "StopAutonomy", "timestamp": now}
+
+    # --- System Control ---
+    if COMMAND_ID == Command.Reboot:
+        logger.warning("[cmd] Reboot requested — writing to pending_action")
+        _write_state({"pending_action": "reboot", "last_command": "Reboot", "timestamp": now})
+        return {"command": "Reboot", "timestamp": now}
+
+    if COMMAND_ID == Command.Shutdown:
+        logger.warning("[cmd] Shutdown requested — writing to pending_action")
+        _write_state({"pending_action": "shutdown", "last_command": "Shutdown", "timestamp": now})
+        return {"command": "Shutdown", "timestamp": now}
+
+    # --- Search Session Control ---
+    if COMMAND_ID == Command.NewSearchSession:
+        session_id = str(uuid.uuid4())[:8]
+        logger.info(f"[cmd] NewSearchSession — id={session_id}")
+        _write_state({
+            "search_phase": {"start_time": now, "time_limit_s": 480, "session_id": session_id},
+            "last_command": "NewSearchSession",
+            "timestamp": now,
+        })
+        return {"command": "NewSearchSession", "session_id": session_id, "timestamp": now}
+
+    if COMMAND_ID == Command.StartSearch:
+        logger.info("[cmd] StartSearch")
+        _write_state({"last_command": "StartSearch", "timestamp": now})
+        return {"command": "StartSearch", "timestamp": now}
+
+    if COMMAND_ID == Command.StopSearch:
+        logger.info("[cmd] StopSearch")
+        _write_state({"last_command": "StopSearch", "timestamp": now})
+        return {"command": "StopSearch", "timestamp": now}
+
+    # --- Target / RF ---
+    if COMMAND_ID == Command.PatientLocation and len(data) >= 10:
+        # Expect: [PAYLOAD_ID, CMD_ID, lat(4B float), lon(4B float)]
+        lat, lon = struct.unpack('>ff', data[2:10])
+        logger.info(f"[cmd] PatientLocation lat={lat:.6f} lon={lon:.6f}")
+        _write_state({
+            "target_fix": {"fix_id": str(uuid.uuid4())[:8], "lat": lat, "lon": lon,
+                           "confidence": None, "timestamp": now},
+            "last_command": "PatientLocation",
+            "timestamp": now,
+        })
+        return {"command": "PatientLocation", "lat": lat, "lon": lon, "timestamp": now}
+
+    if COMMAND_ID == Command.SetTarget and len(data) >= 11:
+        lat, lon = struct.unpack('>ff', data[2:10])
+        confidence = data[10] / 100.0 if len(data) >= 11 else None
+        logger.info(f"[cmd] SetTarget lat={lat:.6f} lon={lon:.6f} conf={confidence}")
+        _write_state({
+            "target_fix": {"fix_id": str(uuid.uuid4())[:8], "lat": lat, "lon": lon,
+                           "confidence": confidence, "timestamp": now},
+            "last_command": "SetTarget",
+            "timestamp": now,
+        })
+        return {"command": "SetTarget", "lat": lat, "lon": lon, "timestamp": now}
+
+    if COMMAND_ID == Command.SearchArea and len(data) >= 3:
+        # Placeholder — parse polygon bytes when gcs-infrastructure spec is finalized
+        logger.info("[cmd] SearchArea received (payload parsing pending)")
+        _write_state({"last_command": "SearchArea", "timestamp": now})
+        return {"command": "SearchArea", "timestamp": now}
+
+    # --- Geofencing (stub — parse when spec is ready) ---
+    if COMMAND_ID == Command.KeepIn:
+        logger.info("[cmd] KeepIn received (not yet implemented)")
         return None
 
-    #KeepOut (not yet implemented)
-    if COMMAND_ID == Command.KeepOut and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.KeepOut:
-        return None
-    
-    #PaitentLocation (not yet implemented)
-    if COMMAND_ID == Command.PatientLocation and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.PatientLocation:
-        return None
-    
-    #Search Area (not yet implemented)
-    if COMMAND_ID == Command.SearchArea and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.SearchArea:
+    if COMMAND_ID == Command.KeepOut:
+        logger.info("[cmd] KeepOut received (not yet implemented)")
         return None
 
-    return None #return None if invalid IDs OR length of recieved data does not match any of the IDs (error check) 
+    logger.warning(f"[cmd] Unknown or malformed command ID={COMMAND_ID} len={len(data)}")
+    return None
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -162,7 +322,10 @@ def main():
     # 1. Connect to MAVProxy
     logger.info(f'Connecting to MAVLink stream on {MAVLINK_URI}')
     mav_connection = mavutil.mavlink_connection(MAVLINK_URI)
-    mav_connection.wait_heartbeat()
+    hb = mav_connection.wait_heartbeat(timeout=30)
+    if not hb:
+        logger.error("No heartbeat received")
+        return
     logger.info(f'Heartbeat from system (system {mav_connection.target_system} component {mav_connection.target_component})')
 
     # 2. Connect to XBee radio (real hardware or MockXBee UDP fallback).
@@ -233,26 +396,144 @@ def main():
         if xb_mode == 'real':
             try:
                 if not CommandQueue.empty():
-                    cmd_obj = ReceiveCommand()
-                    if cmd_obj:
-                        cmd_name = type(cmd_obj).__name__
-                        logger.info(f'Received GCS command: {cmd_name}')
-                        latest_command = {"command": cmd_name, "timestamp": time.time()}
-                        # Forward EmergencyStop to MAVLink flight controller
-                        if cmd_name == 'EmergencyStop':
-                            status = getattr(cmd_obj, 'Status', getattr(cmd_obj, 'status', 0))
-                            if status == 0:
-                                logger.info('Sending MAV_CMD_DO_FLIGHTTERMINATION to flight controller!')
-                                try:
-                                    mav_connection.mav.command_long_send(
-                                        mav_connection.target_system, mav_connection.target_component,
-                                        mavutil.mavlink.MAV_CMD_DO_FLIGHTTERMINATION, 0,
-                                        1.0, 0, 0, 0, 0, 0, 0
-                                    )
-                                except Exception as mav_exc:
-                                    logger.error(f'Failed to send MAVLink command: {mav_exc}')
+                    cmd_raw = ReceiveCommand()
+                    if not cmd_raw:
+                        continue
+
+                    try:
+                        cmd_data = json.loads(cmd_raw) if isinstance(cmd_raw, str) else cmd_raw
+                    except Exception as e:
+                        logger.error(f"[real] Failed to parse command JSON: {e} | raw={cmd_raw}")
+                        continue
+
+                    cmd_id = cmd_data.get("Command ID")
+                    packet_id = cmd_data.get("Packet ID")
+                    now = time.time()
+
+                    logger.info(f"[real] Received GCS command id={cmd_id} packet_id={packet_id}")
+
+                    if cmd_id == 1:
+                        _write_state({
+                            "last_command": "Heartbeat",
+                            "timestamp": now,
+                        })
+                        latest_command = {
+                            "command": "Heartbeat",
+                            "packet_id": packet_id,
+                            "timestamp": now,
+                        }
+
+                    elif cmd_id == 2:
+                        status = cmd_data.get("Stop Status", 0)
+                        
+                        action = "ENABLE" if status == 0 else "DISABLE"
+
+                        if status == 0:
+                            logger.warning("[real] Sending MAV_CMD_DO_FLIGHTTERMINATION!")
+                            try:
+                                mav_connection.mav.command_long_send(
+                                    mav_connection.target_system,
+                                    mav_connection.target_component,
+                                    mavutil.mavlink.MAV_CMD_DO_FLIGHTTERMINATION,
+                                    0,
+                                    1.0, 0, 0, 0, 0, 0, 0
+                                )
+                            except Exception as e:
+                                logger.error(f"[real] MAVLink termination failed: {e}")
+
+                        _write_state({
+                            "pending_action": "emergency_stop" if status == 0 else None,
+                            "last_command": "EmergencyStop",
+                            "timestamp": now,
+                        })
+
+                        latest_command = {
+                            "command": "EmergencyStop",
+                            "packet_id": packet_id,
+                            "action": action,
+                            "timestamp": now,
+                        }
+
+                    elif cmd_id == 3:
+                        coords = cmd_data.get("Coordinates", [])
+                        _write_state({
+                            "keep_in": coords,
+                            "last_command": "KeepIn",
+                            "timestamp": now,
+                        })
+                        latest_command = {
+                            "command": "KeepIn",
+                            "packet_id": packet_id,
+                            "timestamp": now,
+                        }
+
+                    elif cmd_id == 4:
+                        coords = cmd_data.get("Coordinates", [])
+                        _write_state({
+                            "keep_out": coords,
+                            "last_command": "KeepOut",
+                            "timestamp": now,
+                        })
+                        latest_command = {
+                            "command": "KeepOut",
+                            "packet_id": packet_id,
+                            "timestamp": now,
+                        }
+
+                    elif cmd_id == 5:
+                        coords = cmd_data.get("Coordinates", [])
+
+                        if len(coords) >= 2:
+                            lat, lon = coords[0], coords[1]
+                        else:
+                            lat, lon = None, None
+
+                        _write_state({
+                            #I think this is patient location given to us from ERU so this would be where to go for mission 3
+                            "target_fix": {
+                                "fix_id": str(uuid.uuid4())[:8],
+                                "lat": lat,
+                                "lon": lon,
+                                "confidence": None,
+                                "timestamp": now,
+                            },
+                            "last_command": "PatientLocation",
+                            "timestamp": now,
+                        })
+
+                        latest_command = {
+                            "command": "PatientLocation",
+                            "packet_id": packet_id,
+                            "lat": lat,
+                            "lon": lon,
+                            "timestamp": now,
+                        }
+
+                    elif cmd_id == 6:
+                        coords = cmd_data.get("Coordinates", [])
+                        _write_state({
+                            "search_area": coords,
+                            "last_command": "KeepIn",
+                            "timestamp": now,
+                        })
+
+                        latest_command = {
+                            "command": "SearchArea",
+                            "packet_id": packet_id,
+                            "timestamp": now,
+                        }
+
+                    else:
+                        logger.warning(f"[real] Unsupported command id={cmd_id}")
+                        latest_command = {
+                            "command": f"Unknown({cmd_id})",
+                            "packet_id": packet_id,
+                            "timestamp": now,
+                        }
+
             except Exception as e:
-                logger.error(f"Command receive error: {e}")
+                logger.error(f"[real] Command receive error: {e}")
+                
         elif xb_mode == 'mock' and xb:
             frame = xb.retrieve_data()
             if frame and hasattr(frame, 'received_data'):
