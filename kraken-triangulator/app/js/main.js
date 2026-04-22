@@ -5,12 +5,53 @@
  * full data pipeline:
  *   DataFeed -> Triangulation.solve(observation_history) -> MapView + HeatmapView
  *
- * Data schema: { observation_history[], current_observation, frequency_hz,
- *                doa_method }
+ * ── WHAT CHANGED (v1.2 hybrid upgrade) ──────────────────────────
+ *   FILE: main.js
  *
- * Timestamp note:
- *   "LAST RECEIVED" shows the laptop system clock at the moment the poll
- *   response arrived.
+ *   1) Prior box state variables added:
+ *        _priorLat, _priorLon  — operator-typed center coordinates
+ *        _priorBoxLayer        — Leaflet rectangle showing the box on the map
+ *
+ *   2) _getPriorConfig()
+ *        Reads the prior lat/lon inputs and returns a priorConfig object
+ *        { centerLat, centerLon, halfSizeM: 500 } for triangulation.js,
+ *        or null if no valid center has been entered.
+ *
+ *   3) _drawPriorBoxOnMap(priorConfig)
+ *        Draws/updates a dashed cyan rectangle on the main map showing
+ *        the 1 km × 1 km prior search box. Clears old box on each call.
+ *
+ *   4) Prior box UI wiring (DOMContentLoaded block):
+ *        • 'prior-lat' and 'prior-lon' inputs → update state + redraw box
+ *        • 'btn-prior-clear' → clears box and inputs
+ *        Both are wired inside the existing DOMContentLoaded listener.
+ *
+ *   5) _processData() — changed section:
+ *        config.priorConfig is now populated from _getPriorConfig().
+ *        The Bayesian solver receives this so it knows where to search.
+ *
+ *   6) updateResultPanel() — changed section:
+ *        If the result carries `lsDisagreement_m` (only set by hybrid
+ *        Bayesian), it is displayed in the sidebar as "LS vs Bayes".
+ *        The element id is 'res-ls-disagreement' (new HTML element in
+ *        index.html — see paste instructions below).
+ *
+ *   EVERYTHING ELSE is unchanged:
+ *        Tab routing, convergence, estimation log, heatmap controls,
+ *        mask sync, filter wiring, DataFeed, MapView calls — all identical.
+ *
+ * ── ASSUMPTIONS ──────────────────────────────────────────────────
+ *   • index.html has two new <input> elements:
+ *       id="prior-lat"   (number, step=0.000001)
+ *       id="prior-lon"   (number, step=0.000001)
+ *     and a clear button:
+ *       id="btn-prior-clear"
+ *     and a result display span:
+ *       id="res-ls-disagreement"
+ *     See index.html for the exact snippet to add.
+ *   • MapView is already initialised before _drawPriorBoxOnMap runs.
+ *   • The prior box is drawn on the existing 'map' Leaflet instance
+ *     via MapView.getMap() (a one-line getter added to map.js — see note).
  */
 
 (function () {
@@ -30,9 +71,8 @@
             return;
         }
         _estimationMap = L.map('estimation-map', { zoomControl: true });
-        // Use initial view near equator or something safe until first hit
         _estimationMap.setView([0, 0], 2);
-        
+
         const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap'
@@ -40,7 +80,6 @@
         tileLayer.addTo(_estimationMap);
         _estimationMarkers = L.layerGroup().addTo(_estimationMap);
 
-        // sync tile layer setting if exists
         const elTile = document.getElementById('setting-tile');
         if (elTile && typeof TILE_CONFIGS !== 'undefined') {
             const tc = TILE_CONFIGS[elTile.value] || TILE_CONFIGS['osm'];
@@ -61,7 +100,83 @@
         return c.toFixed(6);
     }
 
-    // ── Convergence Computation ─────────────────────────────────
+    // ── [NEW] Prior Box State ──────────────────────────────────────
+    // Stores the operator-entered prior center. Null = prior box inactive.
+    let _priorLat = null;
+    let _priorLon = null;
+    let _priorBoxLayer = null; // Leaflet rectangle on the main map
+
+    /**
+     * [NEW] _getPriorConfig
+     * Reads the prior lat/lon inputs and returns a priorConfig object
+     * ready to pass into Triangulation.solve(), or null if not set.
+     * halfSizeM = 500 → 1 km × 1 km box.
+     */
+    function _getPriorConfig() {
+        if (_priorLat == null || _priorLon == null) return null;
+        if (isNaN(_priorLat) || isNaN(_priorLon)) return null;
+        return {
+            centerLat: _priorLat,
+            centerLon: _priorLon,
+            halfSizeM: 500, // 500 m each direction → 1 km × 1 km
+        };
+    }
+
+    /**
+     * [NEW] _drawPriorBoxOnMap
+     * Draws (or redraws) the 1 km × 1 km prior search box as a dashed
+     * cyan rectangle on the main GPS map, so the operator can see it.
+     * Clears the previous box layer before drawing a new one.
+     *
+     * Uses MapView.getMap() — a tiny one-liner getter in map.js.
+     * If MapView.getMap is not yet available this silently skips.
+     */
+    function _drawPriorBoxOnMap(priorConfig) {
+        // Remove old box if present
+        if (_priorBoxLayer) {
+            if (typeof MapView.getMap === 'function') {
+                MapView.getMap().removeLayer(_priorBoxLayer);
+            }
+            _priorBoxLayer = null;
+        }
+        if (!priorConfig) return;
+
+        // Build lat/lon bounding box from priorConfig
+        const box = Triangulation.buildPriorBox(
+            priorConfig.centerLat,
+            priorConfig.centerLon,
+            priorConfig.halfSizeM
+        );
+
+        if (typeof MapView.getMap !== 'function') {
+            // map.js doesn't expose getMap yet — skip visual, math still works
+            console.warn('[PriorBox] MapView.getMap() not available — box not drawn on map.');
+            return;
+        }
+
+        const map = MapView.getMap();
+        _priorBoxLayer = L.rectangle(
+            [[box.minLat, box.minLon], [box.maxLat, box.maxLon]],
+            {
+                color: '#00d4ff',       // accent-cyan
+                weight: 2,
+                dashArray: '6 4',
+                fill: true,
+                fillColor: '#00d4ff',
+                fillOpacity: 0.04,
+                interactive: false,
+            }
+        ).addTo(map);
+
+        // Tooltip so operator can confirm center
+        _priorBoxLayer.bindTooltip(
+            `Prior Box: ${priorConfig.centerLat.toFixed(6)}, ${priorConfig.centerLon.toFixed(6)}`,
+            { permanent: false, direction: 'top' }
+        );
+    }
+
+    // ── Convergence Computation (unchanged) ───────────────────────
+
     function _computeConvergence() {
         if (_estimationHits.length < 2) return null;
 
@@ -69,7 +184,6 @@
         let wLat = 0, wLon = 0;
 
         for (const hit of _estimationHits) {
-            // Weight = 1 / residual_m (clamped to avoid division by near-zero)
             const residual = Math.max(hit.residual_m ?? 1, 0.1);
             const w = 1.0 / residual;
             wLat += w * hit.lat;
@@ -80,7 +194,6 @@
         const cLat = wLat / totalWeight;
         const cLon = wLon / totalWeight;
 
-        // Weighted standard deviation (spread) in meters
         let wSumSqDist = 0;
         for (const hit of _estimationHits) {
             const residual = Math.max(hit.residual_m ?? 1, 0.1);
@@ -104,11 +217,8 @@
         if (!histContainer) return;
 
         const convergenceEnabled = document.getElementById('setting-convergence')?.checked ?? true;
-
-        // ── Update Converged Estimate Card ──
         _updateConvergedCard(convergenceEnabled);
 
-        // ── Render Hit Log ──
         histContainer.innerHTML = '';
         if (hitCountEl) hitCountEl.textContent = `${_estimationHits.length} hits`;
 
@@ -144,7 +254,6 @@
             histContainer.appendChild(itemDiv);
         });
 
-        // Bind buttons
         document.querySelectorAll('.est-btn.transmit').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const id = parseInt(e.target.dataset.id);
@@ -198,7 +307,6 @@
         document.getElementById('conv-lon').textContent = conv.lon.toFixed(6) + '°';
         document.getElementById('conv-count').textContent = `${conv.count} hits`;
 
-        // Display spread in appropriate units
         const isImperial = document.getElementById('setting-units')?.value === 'imperial';
         if (isImperial) {
             const spreadFt = conv.spreadM * 3.28084;
@@ -218,7 +326,6 @@
         if (!_estimationMarkers) return;
         _estimationMarkers.clearLayers();
 
-        // Individual hit markers
         _estimationHits.forEach(hit => {
             L.circleMarker([hit.lat, hit.lon], {
                 radius: 5,
@@ -229,12 +336,10 @@
             }).addTo(_estimationMarkers);
         });
 
-        // Converged centroid marker (if enabled and ≥ 2 hits)
         const convergenceEnabled = document.getElementById('setting-convergence')?.checked ?? true;
         if (convergenceEnabled) {
             const conv = _computeConvergence();
             if (conv) {
-                // Outer glow ring
                 L.circleMarker([conv.lat, conv.lon], {
                     radius: 14,
                     color: '#00e87a',
@@ -244,7 +349,6 @@
                     dashArray: '4 4'
                 }).addTo(_estimationMarkers);
 
-                // Inner crosshair dot
                 L.circleMarker([conv.lat, conv.lon], {
                     radius: 7,
                     color: '#fff',
@@ -262,7 +366,6 @@
     }
 
     function _addEstimationHit(result) {
-        // Prevent duplicate spam if location hasn't moved much (< 1 meter approx)
         const isSpam = _estimationHits.some(h => {
             if (Triangulation && Triangulation.distanceMeters) {
                 return Triangulation.distanceMeters(h.lat, h.lon, result.lat, result.lon) < 1.0;
@@ -283,14 +386,13 @@
         _estimationHits.push(hit);
         _redrawEstimationMarkers();
         _renderEstimationLog();
-        
-        // Auto-pan if we are at map default view [0,0]
+
         if (_estimationMap && _estimationMap.getZoom() === 2) {
             _estimationMap.setView([result.lat, result.lon], 17);
         }
     }
 
-    // Set up clear button and converged transmit
+    // ── DOMContentLoaded: button wiring ───────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('btn-est-clear-all')?.addEventListener('click', () => {
             if (confirm("Clear all estimation history?")) {
@@ -300,7 +402,6 @@
             }
         });
 
-        // Converged Estimate transmit button
         document.getElementById('btn-conv-transmit')?.addEventListener('click', () => {
             const convergenceEnabled = document.getElementById('setting-convergence')?.checked ?? true;
             if (!convergenceEnabled) return;
@@ -310,18 +411,54 @@
                 console.log(`[Telemetry] TRANSMITTING CONVERGED: ${conv.lat}, ${conv.lon} (±${conv.spreadM.toFixed(1)}m, ${conv.count} hits)`);
                 alert(`Transmitted CONVERGED coordinates to GCS:\nLat: ${conv.lat.toFixed(6)}\nLon: ${conv.lon.toFixed(6)}\nSpread: ±${conv.spreadM.toFixed(1)}m\nBased on: ${conv.count} hits`);
             } else if (_estimationHits.length === 1) {
-                // Single hit — transmit directly
                 const hit = _estimationHits[0];
                 console.log(`[Telemetry] TRANSMITTING SINGLE: ${hit.lat}, ${hit.lon}`);
                 alert(`Transmitted coordinates to GCS:\nLat: ${hit.lat.toFixed(6)}\nLon: ${hit.lon.toFixed(6)}`);
             }
         });
+
+        // ── [NEW] Prior Box UI Wiring ────────────────────────────
+        // Wire the prior-lat and prior-lon inputs so that whenever the
+        // operator types a center coordinate, the prior box is immediately
+        // redrawn on the map and the next solve uses it.
+
+        const elPriorLat = document.getElementById('prior-lat');
+        const elPriorLon = document.getElementById('prior-lon');
+        const elPriorClear = document.getElementById('btn-prior-clear');
+
+        function _onPriorChange() {
+            const lat = parseFloat(elPriorLat?.value);
+            const lon = parseFloat(elPriorLon?.value);
+            _priorLat = isNaN(lat) ? null : lat;
+            _priorLon = isNaN(lon) ? null : lon;
+
+            // Redraw (or clear) the prior box rectangle on the main map
+            const pc = _getPriorConfig();
+            _drawPriorBoxOnMap(pc);
+
+            // Immediately re-solve with the new prior if we have data
+            if (_lastData) _processData(_lastData);
+        }
+
+        elPriorLat?.addEventListener('change', _onPriorChange);
+        elPriorLon?.addEventListener('change', _onPriorChange);
+
+        // Clear button: wipe inputs, remove box, re-solve without prior
+        elPriorClear?.addEventListener('click', () => {
+            if (elPriorLat) elPriorLat.value = '';
+            if (elPriorLon) elPriorLon.value = '';
+            _priorLat = null;
+            _priorLon = null;
+            _drawPriorBoxOnMap(null);
+            if (_lastData) _processData(_lastData);
+        });
+        // ── end prior box wiring ─────────────────────────────────
     });
 
     tabButtons.forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
     switchTab('map');
 
-    // ── Settings Wiring ────────────────────────────────────────────
+    // ── Settings Wiring (unchanged) ───────────────────────────────
     const elPollInterval  = document.getElementById('setting-poll-interval');
     const elTile          = document.getElementById('setting-tile');
     const elUncertainty   = document.getElementById('setting-uncertainty');
@@ -335,28 +472,25 @@
         if (!el) return;
         const key = `kraken_setting_${el.id}`;
         const saved = localStorage.getItem(key);
-        
         if (saved !== null) {
             if (el.type === 'checkbox') el.checked = (saved === 'true');
             else el.value = saved;
         }
-        
         el.addEventListener('change', () => {
             const val = el.type === 'checkbox' ? el.checked : el.value;
             localStorage.setItem(key, val);
         });
     }
 
-    const _allSettings = [elPollInterval, elTile, elUncertainty, elLineLength, elAlgo, elMinConf, elUnits, 
-        document.getElementById('setting-filter-spatial'), 
-        document.getElementById('setting-filter-temporal'), 
-        document.getElementById('setting-filter-attitude'), 
+    const _allSettings = [elPollInterval, elTile, elUncertainty, elLineLength, elAlgo, elMinConf, elUnits,
+        document.getElementById('setting-filter-spatial'),
+        document.getElementById('setting-filter-temporal'),
+        document.getElementById('setting-filter-attitude'),
         document.getElementById('setting-filter-angular'),
         elConvergence];
-        
+
     _allSettings.forEach(bindSetting);
 
-    // Convergence toggle → immediately re-render estimation UI
     elConvergence?.addEventListener('change', () => {
         _renderEstimationLog();
     });
@@ -386,20 +520,18 @@
 
     elUnits?.addEventListener('change', () => {
         MapView.refreshCustomMarkers();
-        
+
         const isImperial = elUnits.value === 'imperial';
         const isPrevImperial = elUnits.dataset.prev === 'imperial';
-        
-        // Sync Mask UI units
+
         document.querySelectorAll('.mask-unit-lbl').forEach(lbl => {
             lbl.textContent = isImperial ? 'mi' : 'km';
         });
-        
+
         const lineLenLbl = document.getElementById('line-length-unit');
         if (lineLenLbl) lineLenLbl.textContent = isImperial ? 'mi' : 'km';
-        
+
         if (elUnits.dataset.prev && isImperial !== isPrevImperial) {
-            // Update line length value directly
             if (elLineLength) {
                 let v = parseFloat(elLineLength.value);
                 if (!isNaN(v)) {
@@ -408,12 +540,11 @@
                 }
             }
         }
-        
+
         elUnits.dataset.prev = elUnits.value;
         if (window._syncMaskUI) window._syncMaskUI();
         if (_lastData) _processData(_lastData);
     });
-    // Trigger initial label sync
     elUnits.dataset.prev = elUnits.value;
     elUnits?.dispatchEvent(new Event('change'));
 
@@ -431,7 +562,7 @@
         if (card) card.classList.toggle('obs-collapsed');
     });
 
-    // ── Heatmap Controls ───────────────────────────────────────────
+    // ── Heatmap Controls (unchanged) ──────────────────────────────
     function wireSlider(id, valId, factor, setFn) {
         const slider = document.getElementById(id);
         const label  = document.getElementById(valId);
@@ -447,7 +578,7 @@
     wireSlider('hm-opacity', 'hm-opacity-val', 0.1,  MapView.setHeatOpacity);
     document.getElementById('hm-clear-btn')?.addEventListener('click', MapView.clearHeat);
 
-    // ── Global App Logic ───────────────────────────────────────────
+    // ── Global App Logic (unchanged) ──────────────────────────────
     window._triggerAppUpdate = () => { if (_lastData) _processData(_lastData); };
 
     document.getElementById('btn-master-clear')?.addEventListener('click', () => {
@@ -460,28 +591,26 @@
         }
         _processData(_lastData);
     });
+
     const syncMenuStates = () => {
         const maskToggle = document.getElementById('btn-draw-mask-toggle');
         const polyToggle = document.getElementById('btn-draw-poly-toggle');
         const maskBlock = document.getElementById('mask-tools-block');
         const polyBlock = document.getElementById('poly-tools-block');
-        
+
         if (maskToggle && polyToggle && maskBlock && polyBlock) {
             const maskToggleRow = maskToggle.closest('div');
             const polyToggleRow = polyToggle.closest('div');
-            
-            // Reset state
+
             maskBlock.style.opacity = '1'; maskBlock.style.pointerEvents = 'auto';
             polyBlock.style.opacity = '1'; polyBlock.style.pointerEvents = 'auto';
             if (maskToggleRow) { maskToggleRow.style.opacity = '1'; maskToggleRow.style.pointerEvents = 'auto'; maskToggle.disabled = false; }
             if (polyToggleRow) { polyToggleRow.style.opacity = '1'; polyToggleRow.style.pointerEvents = 'auto'; polyToggle.disabled = false; }
 
             if (maskToggle.checked) {
-                // Dim Poly entirely
                 polyBlock.style.opacity = '0.3'; polyBlock.style.pointerEvents = 'none';
                 if (polyToggleRow) { polyToggleRow.style.opacity = '0.3'; polyToggleRow.style.pointerEvents = 'none'; polyToggle.disabled = true; }
             } else if (polyToggle.checked) {
-                // Dim Mask entirely
                 maskBlock.style.opacity = '0.3'; maskBlock.style.pointerEvents = 'none';
                 if (maskToggleRow) { maskToggleRow.style.opacity = '0.3'; maskToggleRow.style.pointerEvents = 'none'; maskToggle.disabled = true; }
             }
@@ -496,13 +625,13 @@
                 polyToggle.checked = false;
                 if (window.clearPoly) window.clearPoly();
             }
-            window.drawDefaultMask(null, null); // Trigger interactive crosshair drawing mode immediately
+            window.drawDefaultMask(null, null);
         } else {
             if (window.clearMask) window.clearMask();
         }
         syncMenuStates();
     });
-    
+
     document.getElementById('btn-draw-poly-toggle')?.addEventListener('change', (e) => {
         if (!window.drawPolygonMask) return;
         if (e.target.checked) {
@@ -526,7 +655,7 @@
         if (window.clearMask) window.clearMask();
         syncMenuStates();
     });
-    
+
     document.getElementById('btn-clear-poly')?.addEventListener('click', () => {
         const toggle = document.getElementById('btn-draw-poly-toggle');
         if (toggle) toggle.checked = false;
@@ -557,32 +686,29 @@
         if (window.clearMask) window.clearMask();
         if (window.clearPoly) window.clearPoly();
         if (MapView.clearHeat) MapView.clearHeat();
-        
+
         const maskToggle = document.getElementById('btn-draw-mask-toggle');
         if (maskToggle) maskToggle.checked = false;
         const polyToggle = document.getElementById('btn-draw-poly-toggle');
         if (polyToggle) polyToggle.checked = false;
         syncMenuStates();
     });
-    
+
     window._triggerAppUpdate = () => {
         if (_lastData) _processData(_lastData);
     };
 
-    // Helper to sync UI fields with map geometry
     window._syncMaskUI = (overrideBounds = null) => {
         const bounds = overrideBounds || (typeof window.getMaskBounds === 'function' ? window.getMaskBounds() : null);
         if (!bounds) return;
-        
+
         const isImperial = (document.getElementById('setting-units')?.value === 'imperial');
         const factor = isImperial ? 1609.34 : 1000;
-        
-        // Calculate width/height in chosen units
-        // Simple approximation for short distances
+
         const latMid = (bounds.minLat + bounds.maxLat) / 2;
         const widthM = L.latLng(latMid, bounds.minLon).distanceTo(L.latLng(latMid, bounds.maxLon));
         const heightM = L.latLng(bounds.minLat, bounds.minLon).distanceTo(L.latLng(bounds.maxLat, bounds.minLon));
-        
+
         const elW = document.getElementById('mask-width');
         const elH = document.getElementById('mask-height');
         if (elW) elW.value = (widthM / factor).toFixed(2);
@@ -593,11 +719,11 @@
         const widthVal = document.getElementById('mask-width')?.value;
         const heightVal = document.getElementById('mask-height')?.value;
         if (!widthVal || !heightVal || !window.drawDefaultMask) return;
-        
+
         const isImperial = (document.getElementById('setting-units')?.value === 'imperial');
         const widthMeters = parseFloat(widthVal) * (isImperial ? 1609.34 : 1000);
         const heightMeters = parseFloat(heightVal) * (isImperial ? 1609.34 : 1000);
-        
+
         let oldCenterLat = null;
         let oldCenterLng = null;
         if (typeof window.getMaskCenter === 'function') {
@@ -607,7 +733,7 @@
                 oldCenterLng = c.lng;
             }
         }
-        
+
         if (window.clearMask) window.clearMask();
         window.drawDefaultMask(widthMeters, heightMeters, '#9b59b6', oldCenterLat, oldCenterLng);
         const toggle = document.getElementById('btn-draw-mask-toggle');
@@ -618,8 +744,7 @@
         document.getElementById(id)?.addEventListener('change', updateMaskFromInputs);
     });
 
-
-    // ── Bearing Log ───────────────────────────────────────────────
+    // ── Bearing Log (unchanged) ───────────────────────────────────
     let _logEntries = [];
     let _logCounter = 0;
     let _loggedIds  = new Set();
@@ -656,7 +781,6 @@
 
             const conf = obs.confidence ?? 0;
             const confClass = conf >= 0.8 ? 'conf-high' : conf >= 0.5 ? 'conf-med' : 'conf-low';
-            // Use server-assigned system-clock time (received_at)
             const time = obs.received_at
                 ? new Date(obs.received_at).toLocaleTimeString()
                 : new Date().toLocaleTimeString();
@@ -684,7 +808,7 @@
         }
     }
 
-    // ── Sidebar Result Panel ───────────────────────────────────────
+    // ── Sidebar Result Panel (CHANGED: adds LS vs Bayes row) ──────
     function updateResultPanel(data, result, displayHistory) {
         const set = (id, val) => {
             const el = document.getElementById(id);
@@ -696,7 +820,7 @@
         if (result) {
             set('res-lat',      result.lat.toFixed(6) + '\u00b0');
             set('res-lon',      result.lon.toFixed(6) + '\u00b0');
-            
+
             const isEmp = document.getElementById('setting-units')?.value === 'imperial';
             if (isEmp) {
                 const ft = result.residual_m * 3.28084;
@@ -706,24 +830,45 @@
                 if (result.residual_m >= 1000) set('res-error', (result.residual_m / 1000).toFixed(2) + ' km');
                 else set('res-error', result.residual_m.toFixed(1) + ' m');
             }
-            
+
             set('res-stations', `${result.stationsUsed} / ${displayHistory.length}`);
+
+            // [NEW] Show LS vs Bayesian disagreement when in hybrid mode.
+            // If lsDisagreement_m is present, the Bayesian prior-box flow ran.
+            // A null value means LS-AoA or midpoint was used (no disagreement row).
+            if (result.lsDisagreement_m != null) {
+                const d = result.lsDisagreement_m;
+                const isEmpD = document.getElementById('setting-units')?.value === 'imperial';
+                let dLabel;
+                if (isEmpD) {
+                    const dFt = d * 3.28084;
+                    dLabel = dFt >= 5280 ? (dFt / 5280).toFixed(2) + ' mi' : dFt.toFixed(1) + ' ft';
+                } else {
+                    dLabel = d >= 1000 ? (d / 1000).toFixed(2) + ' km' : d.toFixed(1) + ' m';
+                }
+                // Colour-code: green < 20 m, amber < 100 m, red ≥ 100 m
+                const colour = d < 20 ? '#00e87a' : d < 100 ? '#ffb84d' : '#ff4d6a';
+                set('res-ls-disagreement', dLabel);
+                const el = document.getElementById('res-ls-disagreement');
+                if (el) el.style.color = colour;
+            } else {
+                set('res-ls-disagreement', '—');
+                const el = document.getElementById('res-ls-disagreement');
+                if (el) el.style.color = '';
+            }
+
         } else {
-            ['res-lat','res-lon','res-error','res-stations'].forEach(id => set(id, '—'));
+            ['res-lat','res-lon','res-error','res-stations','res-ls-disagreement'].forEach(id => set(id, '—'));
         }
 
         const freqMHz = data?.frequency_hz ? (data.frequency_hz / 1e6).toFixed(4) + ' MHz' : '—';
         set('res-freq', freqMHz);
         set('res-doa',  data?.doa_method ?? '—');
-
-        // LAST RECEIVED = laptop system clock when this poll was processed
         set('res-timestamp', new Date().toLocaleTimeString());
 
-        // Observation list
         const stList = document.getElementById('station-list');
         if (stList && displayHistory.length > 0) {
             const isCurrent = (obs) => current && obs.id === current.id;
-            // Use reverse to show newest observations at the top of the list for better UX
             const renderedHtml = [...displayHistory].reverse().map(obs => {
                 const cur = isCurrent(obs);
                 return `<div class="station-item">
@@ -740,7 +885,7 @@
         }
     }
 
-    // ── Core Data Pipeline ─────────────────────────────────────────
+    // ── Core Data Pipeline (CHANGED: priorConfig injected) ────────
     let _lastData = null;
 
     const modeBadge = document.getElementById('mode-badge');
@@ -748,7 +893,6 @@
     function _processData(data) {
         _lastData = data;
 
-        // Status Badge
         if (data?.source === 'udp_stream') {
             if (modeBadge) {
                 modeBadge.textContent = 'LIVE TELEMETRY';
@@ -769,10 +913,9 @@
 
         let history = data?.observation_history ?? [];
         const minConf = parseFloat(elMinConf?.value ?? 0.5);
-        
-        // 1. Initial manual pruning (Confidence, Attitude, Temporal)
+
         let filtered = history.filter(obs => (obs.confidence ?? 1) >= minConf);
-        
+
         if (elFilterAttitude?.checked) {
             filtered = filtered.filter(obs => {
                 const roll = Math.abs(obs.roll_deg || 0);
@@ -780,39 +923,41 @@
                 return roll <= 15.0 && pitch <= 15.0;
             });
         }
-        
+
         if (elFilterTemporal?.checked) {
             filtered = filtered.slice(-30);
         }
 
-        // 2. Fetch spatial AABB mask if active
         let aabb = null;
         if (typeof window.getMaskBounds === 'function') {
             aabb = window.getMaskBounds();
         }
-        
+
         let polyBounds = null;
         if (typeof window.getPolyBounds === 'function') {
             polyBounds = window.getPolyBounds();
         }
-        
+
         const config = {
             filterSpatial: document.getElementById('btn-draw-mask-toggle')?.checked ?? false,
             filterPoly: document.getElementById('btn-draw-poly-toggle')?.checked ?? false,
             filterAngular: elFilterAngular?.checked ?? true,
             aabb: aabb,
-            polyBounds: polyBounds
+            polyBounds: polyBounds,
+            // [NEW] Inject the operator's prior center into config so
+            // Triangulation.solve() can pass it down to bayesianGrid().
+            // If null, Bayesian falls back to legacy 15 km grid.
+            priorConfig: _getPriorConfig(),
         };
 
-        const algo   = elAlgo?.value || 'ls_aoa';
+        const algo = elAlgo?.value || 'ls_aoa';
         let result = filtered.length >= 2 ? Triangulation.solve(filtered, algo, config) : null;
-        
-        // 3. Identify which observations were actually used in the final math (for map dots coloring)
+
         let validObs = Triangulation.filterStations(filtered, config);
-        
-        // Strict boundary pruning: if resulting triangulation coordinate forms outside mask, drop it!
+
+        // Strict boundary pruning: drop result if it lands outside the rectangle mask
         if (result && aabb) {
-            if (result.lat < aabb.minLat || result.lat > aabb.maxLat || 
+            if (result.lat < aabb.minLat || result.lat > aabb.maxLat ||
                 result.lon < aabb.minLon || result.lon > aabb.maxLon) {
                 result = null;
             }
@@ -831,7 +976,6 @@
             const el = document.getElementById('hm-point-count');
             if (el) el.textContent = MapView.getHeatPointCount();
 
-            // ── Estimation Mask & Proximity Flagging ──
             if (typeof window.getSearchAreaSummary === 'function') {
                 const sa = window.getSearchAreaSummary();
                 if (sa && sa.isActive && sa.center && sa.isInside) {
@@ -849,17 +993,16 @@
 
     DataFeed.onData(_processData);
 
-    // ── Eager Map Init ─────────────────────────────────────────────
+    // ── Eager Map Init (unchanged) ────────────────────────────────
     requestAnimationFrame(() => {
         MapView.init('map');
-        
-        // Eagerly apply loaded settings cleanly
+
         _allSettings.forEach(el => {
             if (el && el !== elPollInterval) {
                 el.dispatchEvent(new Event('change'));
             }
         });
-        
+
         console.log('[App] Maps initialised. Starting data feed...');
         DataFeed.start();
     });

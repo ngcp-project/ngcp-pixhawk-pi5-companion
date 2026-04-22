@@ -22,6 +22,6 @@ gcs-laptop-router/mav.tlog.raw
 
 # Sub-applications (local development only)
 ngcp-uav-software/
-kraken-triangulator/
+# kraken-triangulator/
 gcs-desktop-app/
 gcs-infrastructure/

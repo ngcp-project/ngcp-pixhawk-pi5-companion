@@ -108,6 +108,11 @@
                                 <span class="result-label">OBS. USED / TOTAL</span>
                                 <span class="result-value mono" id="res-stations">—</span>
                             </div>
+                            <div class="result-item" id="result-item-disagreement"
+                                title="Distance between LS-AoA estimate and Bayesian estimate. Green=agree, Amber=slight disagreement, Red=large disagreement. Only shown in Bayesian mode.">
+                                <span class="result-label">LS vs BAYES</span>
+                                <span class="result-value mono" id="res-ls-disagreement">—</span>
+                            </div>
                         </div>
                         <div class="sidebar-card" id="station-list-card">
                             <div class="card-header-flex" style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
@@ -123,6 +128,31 @@
                         <div class="sidebar-card">
                             <h3>Interactive Filters</h3>
                             <div class="settings-group" style="margin-top: 8px; border:none; background:none;">
+                                <div style="margin-bottom:14px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+                                    <div style="font-size:0.65rem; font-weight:700; text-transform:uppercase;
+                                                letter-spacing:0.08em; color:var(--accent-cyan); margin-bottom:8px;">
+                                        Bayesian Prior Box
+                                    </div>
+                                    <div style="font-size:0.68rem; color:var(--text-muted); margin-bottom:8px; line-height:1.5;">
+                                        Enter a rough center coordinate. Bayesian will search a
+                                        <strong style="color:var(--text-secondary);">1 km × 1 km</strong> box
+                                        at 5 m resolution around this point.
+                                    </div>
+                                    <label class="setting-row-compact" style="margin-bottom:6px;">
+                                        <span class="setting-label-tiny">Center Latitude</span>
+                                        <input type="number" id="prior-lat" step="0.000001" placeholder="e.g. 34.057600"
+                                            class="setting-input-tiny" style="width:100%;">
+                                    </label>
+                                    <label class="setting-row-compact" style="margin-bottom:8px;">
+                                        <span class="setting-label-tiny">Center Longitude</span>
+                                        <input type="number" id="prior-lon" step="0.000001" placeholder="e.g. -117.821200"
+                                            class="setting-input-tiny" style="width:100%;">
+                                    </label>
+                                    <button id="btn-prior-clear" class="btn-secondary"
+                                            style="width:100%; font-size:0.65rem; padding:5px 8px; color:var(--text-muted);">
+                                        Clear Prior Box
+                                    </button>
+                                </div>
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                                     <label style="display:flex; align-items:center; gap:8px; font-size:0.75rem; cursor:pointer; color:var(--text-secondary);">
                                         <input type="checkbox" id="btn-draw-mask-toggle" style="width:14px; height:14px;">

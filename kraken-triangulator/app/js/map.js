@@ -985,6 +985,6 @@ const MapView = (() => {
     return { 
         init, update, setTile, setLineLength, setShowUncertainty, invalidateSize,
         addHeatPoint, clearHeat, setHeatGrid, setHeatRadius, setHeatBlur, setHeatOpacity, getHeatPointCount,
-        getMaskGeoJSON
+        getMaskGeoJSON, getMap: () => _map
     };
 })();
