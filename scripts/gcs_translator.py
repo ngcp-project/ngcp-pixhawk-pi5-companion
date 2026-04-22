@@ -282,10 +282,10 @@ def main():
             telemetry.MessageFlag = 0
             telemetry.PatientStatus = 0
             
-            # --- KRAKEN GCS BRIDGE ---
-            # If we received a target via MAVLink recently (e.g. within this session), flag it
+            # --- PATIENT LOCATION (MessageFlag=2) ---
+            # If we received a patient location via MAVLink (from Kraken Triangulator), flag it
             if getattr(telemetry, '_last_target_mtime', 0) > 0:
-                telemetry.MessageFlag = 2
+                telemetry.MessageFlag = 2  # 2 = Patient per GCS Telemetry spec
             
             # Encode and transmit telemetry over XBee (real or mock).
             try:
