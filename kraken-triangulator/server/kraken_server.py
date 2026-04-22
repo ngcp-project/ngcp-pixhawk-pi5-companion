@@ -39,6 +39,12 @@ try:
 except ImportError:
     REQUESTS_AVAILABLE = False
 
+try:
+    from pymavlink import mavutil
+    PYMAVLINK_AVAILABLE = True
+except ImportError:
+    PYMAVLINK_AVAILABLE = False
+
 # ── Configuration ──────────────────────────────────────────────────────────────
 PORT            = int(os.environ.get("PORT", 5050))
 KRAKEN_API_URL  = os.environ.get("KRAKEN_API_URL", "")
@@ -77,6 +83,15 @@ _live_mode      = False
 UDP_PORT        = int(os.environ.get("UDP_PORT", 5051))
 _live_history   = []
 _live_current   = None
+
+# ── Persistent MAVLink Upstream Connection ────────────────────────────────────
+# Binds to port 14551 where the GCS Laptop MAVProxy router sends telemetry.
+# This establishes a bidirectional link: we receive MAVLink data from MAVProxy,
+# and can send packets back (e.g. DEBUG_VECT) which MAVProxy forwards to
+# COM port (RFD-900x) → Pi 5 → gcs_translator.py.
+MAVLINK_UPSTREAM_PORT = int(os.environ.get("MAVLINK_UPSTREAM_PORT", 14551))
+_mav_upstream = None        # Set at startup
+_mav_upstream_ready = False # True once we've received at least one packet
 
 def _load_mock():
     global _mock_data, _waypoints, _obs_index, _last_advance_t, _obs_timestamps
@@ -437,7 +452,25 @@ def transmit():
         target_file.parent.mkdir(parents=True, exist_ok=True)
         with open(target_file, "w") as f:
             json.dump(payload, f)
-        logger.info(f"Target locked and exported to bridge: {lat}, {lon}")
+            
+        # --- UPSTREAM MAVLINK TRANSMISSION ---
+        # Send the target coordinates upstream through the persistent MAVLink
+        # connection. This flows: kraken_server → MAVProxy (port 14551) →
+        # COM13 (RFD-900x) → Pi 5 MAVProxy → gcs_translator.py
+        if _mav_upstream and _mav_upstream_ready:
+            try:
+                _mav_upstream.mav.debug_vect_send(
+                    b'KRAKEN_TGT', int(time.time() * 1e6), lat, lon, spread_m
+                )
+                logger.info(f"Target sent UPSTREAM via MAVLink: {lat}, {lon} (spread={spread_m:.1f}m)")
+            except Exception as mav_e:
+                logger.error(f"MAVLink upstream transmission failed: {mav_e}")
+        elif not PYMAVLINK_AVAILABLE:
+            logger.error("pymavlink is not installed. Run: pip install pymavlink")
+        elif not _mav_upstream_ready:
+            logger.warning("MAVLink upstream not ready — no packets received from MAVProxy yet. "
+                           "Is the GCS Laptop MAVProxy Router running?")
+
         return jsonify({"status": "ok", "message": "Transmitted successfully"})
     except Exception as e:
         logger.error(f"Failed to export target: {e}")
@@ -497,12 +530,44 @@ def udp_listener_thread():
         except Exception as e:
             logger.error(f"UDP parse error: {e}")
 
+def _mavlink_drain_thread():
+    """Background thread: drain incoming MAVLink packets to keep the connection alive.
+    Once the first packet arrives from MAVProxy, the return address is learned
+    and _mav_upstream_ready is set to True."""
+    global _mav_upstream_ready
+    while True:
+        try:
+            if _mav_upstream is None:
+                time.sleep(1)
+                continue
+            msg = _mav_upstream.recv_match(blocking=True, timeout=5)
+            if msg and not _mav_upstream_ready:
+                _mav_upstream_ready = True
+                logger.info(f"MAVLink upstream link ESTABLISHED — bidirectional path to MAVProxy confirmed.")
+        except Exception as e:
+            logger.error(f"MAVLink drain error: {e}")
+            time.sleep(1)
+
 if __name__ == "__main__":
     _live_mode = True
     logger.info("LIVE UDP MODE FORCED. Mock data disabled.")
     
     # Spin up the background telemetry listener
     threading.Thread(target=udp_listener_thread, daemon=True).start()
+
+    # Establish persistent MAVLink upstream connection for bidirectional
+    # communication with the GCS Laptop MAVProxy Router (RFD-900x link).
+    if PYMAVLINK_AVAILABLE:
+        try:
+            _mav_upstream = mavutil.mavlink_connection(f'udpin:0.0.0.0:{MAVLINK_UPSTREAM_PORT}')
+            logger.info(f"MAVLink upstream bound to udpin:0.0.0.0:{MAVLINK_UPSTREAM_PORT} "
+                        f"— waiting for MAVProxy packets...")
+            threading.Thread(target=_mavlink_drain_thread, daemon=True).start()
+        except Exception as e:
+            logger.error(f"Failed to bind MAVLink upstream on port {MAVLINK_UPSTREAM_PORT}: {e}")
+            _mav_upstream = None
+    else:
+        logger.warning("pymavlink not installed — upstream MAVLink transmission disabled.")
 
     if KRAKEN_API_URL:
         logger.info(f"LIVE KRAKEN MODE — Proxying KrakenSDR API at {KRAKEN_API_URL}")
