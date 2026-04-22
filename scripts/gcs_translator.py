@@ -8,6 +8,8 @@ import struct
 import socket
 import threading
 import queue
+import os
+from pathlib import Path
 from enum import IntEnum
 try:
     from pymavlink import mavutil
@@ -163,7 +165,7 @@ def main():
     try:
         # Define destination GCS laptop MAC address.
         from PacketLibrary.PacketLibrary import PacketLibrary
-        PacketLibrary.SetGCSMACAddress("000000000000FFFF")
+        PacketLibrary.SetGCSMACAddress("0013A2004298267E")
         
         LaunchVehicleXBee(get_xbee_port())
         xb_mode = 'real'
@@ -213,6 +215,15 @@ def main():
                 # We map 4=ACTIVE → 1 (nominal), all others → 0 (not ready).
                 mav_state = getattr(msg, 'system_status', 0)
                 telemetry.VehicleStatus = 1 if mav_state == 4 else 0
+            elif msg_type == 'DEBUG_VECT':
+                # Intercept upstream target coordinates from Kraken Server
+                raw_name = getattr(msg, 'name', '')
+                msg_name = (raw_name.decode('utf-8', 'ignore') if isinstance(raw_name, bytes) else str(raw_name)).strip('\x00')
+                if msg_name == 'KRAKEN_TGT':
+                    telemetry.MessageLat = float(msg.x)
+                    telemetry.MessageLon = float(msg.y)
+                    telemetry._last_target_mtime = time.time()
+                    logger.info(f"Intercepted Target from upstream MAVLink: {msg.x}, {msg.y}")
 
         current_time = time.time()
         
@@ -261,23 +272,9 @@ def main():
             telemetry.PatientStatus = 0
             
             # --- KRAKEN GCS BRIDGE ---
-            target_file = Path('/tmp/kraken_gcs_target.json') if os.name != 'nt' else Path(os.environ.get('TEMP', 'C:/Temp')) / 'kraken_gcs_target.json'
-            try:
-                if target_file.exists():
-                    mtime = target_file.stat().st_mtime
-                    if mtime > getattr(telemetry, '_last_target_mtime', 0):
-                        with open(target_file, 'r') as f:
-                            target_data = json.load(f)
-                        telemetry.MessageLat = float(target_data.get('lat', 0.0))
-                        telemetry.MessageLon = float(target_data.get('lon', 0.0))
-                        telemetry._last_target_mtime = mtime
-                        logger.info(f"Loaded new Kraken Target: {telemetry.MessageLat}, {telemetry.MessageLon}")
-                    
-                    # If we have a target loaded, flag it as Patient Location
-                    if getattr(telemetry, '_last_target_mtime', 0) > 0:
-                        telemetry.MessageFlag = 2
-            except Exception as e:
-                logger.error(f"Error reading Kraken target: {e}")
+            # If we received a target via MAVLink recently (e.g. within this session), flag it
+            if getattr(telemetry, '_last_target_mtime', 0) > 0:
+                telemetry.MessageFlag = 2
             
             # Encode and transmit telemetry over XBee (real or mock).
             try:
