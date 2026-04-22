@@ -6,23 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ---
 
-## [v1.3.0] — 2026-04-10
-
-### Added
-- **MRA Fusion Schema Translator** (`kraken_server.py`): UDP listener now auto-detects MRA Software Team fusion records (identified by `kraken_seq` field) and transparently translates them to the Kraken observation schema (`lat_deg`→`lat`, `lon_deg`→`lon`, `doa_deg`→`bearing_deg`, `confidence_0_1`→`confidence`). Non-usable records (`usable_for_triangulation=false`) are silently dropped. Original MRA metadata preserved under `fusion_meta` key for debugging.
-- **GCS Router Port 14602**: MAVProxy laptop router now fans telemetry to a 4th endpoint `udp:127.0.0.1:14602` dedicated to MRA's `fusion_receiver.py` for reassembling chunked STATUSTEXT fusion frames from the airborne Pi 5.
-
-### Changed
-- **GCS-Laptop-MAVProxy-Router.md**: Updated architecture diagram, port map table, and manual fallback command to reflect 4-port fan-out (added `:14602 → MRA Fusion Receiver`).
-- **Branch Cleanup**: Merged `EstimationTab` branch into `main` (fast-forward). Deleted stale `EstimationTab` and `UI-Overhaul` branches (local + remote). Pre-merge rollback tag: `v1.2.0-pre-merge`.
-
-### Integration
-- Cloned MRA Software Team repository (`NGCP-UAV-Software-Team-2025-26/ngcp-uav-software`, branch `feat/len`) for cross-team analysis. Key integration scripts: `fusion_sender.py`, `fusion_receiver.py`, `triangulation_processor.py`.
-
----
-
 ## [v1.2.0] — 2026-04-10
-
 
 ### Added
 - **GCS Laptop MAVProxy Router** (`gcs-laptop-router/`): A new directory containing a complete Windows-side MAVLink routing solution for the Ground Control Station laptop.
@@ -84,7 +68,7 @@ The following items are planned but not yet implemented:
 - [ ] **Frontend Transmit Button**: Replace the mocked `console.log`/`alert` in `main.js` with a `fetch('/api/transmit')` call and visual blink/highlight feedback on the button.
 
 ### Medium Priority
-- [x] **Sensor Fusion Ingestion API**: ~~Endpoint in `kraken_server.py` or `gcs_translator.py` to receive external positioning data from Software Team scripts.~~ *Implemented in v1.3.0 via `_translate_fusion_record()` — MRA fusion records auto-translated on UDP port 5051.*
+- [ ] **Sensor Fusion Ingestion API**: Endpoint in `kraken_server.py` or `gcs_translator.py` to receive external positioning data from Software Team scripts.
 - [ ] **Process Watchdog**: `systemd` service units for auto-restarting `mavproxy`, `gcs_translator.py`, and `gui_server.py` on the Pi 5.
 - [ ] **Persistent State Directory**: Move runtime state files from `/tmp/` to `/var/run/ngcp/` to survive Pi 5 reboots.
 

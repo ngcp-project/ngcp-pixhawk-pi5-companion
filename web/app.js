@@ -57,6 +57,19 @@ document.addEventListener('DOMContentLoaded', () => {
             const date = new Date(data.last_updated);
             document.getElementById('val-updated').textContent = date.toLocaleTimeString() + '.' + date.getMilliseconds().toString().padStart(3, '0');
         }
+        
+        let flagStr = "NONE";
+        if (data.message_flag === 1) flagStr = "PACKAGE";
+        if (data.message_flag === 2) flagStr = "PATIENT";
+        
+        document.getElementById('val-target-flag').textContent = flagStr;
+        if (data.message_flag > 0) {
+            document.getElementById('val-target-lat').textContent = data.target_lat ? data.target_lat.toFixed(6) : '0.000000';
+            document.getElementById('val-target-lon').textContent = data.target_lon ? data.target_lon.toFixed(6) : '0.000000';
+        } else {
+            document.getElementById('val-target-lat').textContent = '--';
+            document.getElementById('val-target-lon').textContent = '--';
+        }
 
         if (data.hex_payload) {
             document.getElementById('val-hex').textContent = data.hex_payload;

@@ -122,7 +122,18 @@
         normHits.forEach(hit => {
             const itemDiv = document.createElement('div');
             itemDiv.className = `estimation-item significant`;
-            const residualLabel = hit.residual_m != null ? hit.residual_m.toFixed(1) + ' m' : '—';
+            const isImperial = document.getElementById('setting-units')?.value === 'imperial';
+            let residualLabel = '—';
+            if (hit.residual_m != null) {
+                if (isImperial) {
+                    const ft = hit.residual_m * 3.28084;
+                    residualLabel = ft >= 5280 ? (ft / 5280).toFixed(2) + ' mi' : ft.toFixed(1) + ' ft';
+                } else {
+                    residualLabel = hit.residual_m >= 1000
+                        ? (hit.residual_m / 1000).toFixed(2) + ' km'
+                        : hit.residual_m.toFixed(1) + ' m';
+                }
+            }
             itemDiv.innerHTML = `
                 <div class="est-row">
                     <span>Lat/Lon</span>
@@ -151,7 +162,9 @@
                 const hit = _estimationHits.find(h => h.id === id);
                 if (hit) {
                     console.log(`[Telemetry] TRANSMITTING: ${hit.lat}, ${hit.lon}`);
-                    alert(`Transmitted coordinates to GCS: \nLat: ${hit.lat}\nLon: ${hit.lon}`);
+                    _transmitToGCS(hit.lat, hit.lon, 0, 1)
+                        .then(() => alert(`Transmitted coordinates to GCS: \nLat: ${hit.lat}\nLon: ${hit.lon}`))
+                        .catch(e => alert(`Transmission failed: ${e}`));
                 }
             });
         });
@@ -308,12 +321,16 @@
             const conv = _computeConvergence();
             if (conv) {
                 console.log(`[Telemetry] TRANSMITTING CONVERGED: ${conv.lat}, ${conv.lon} (±${conv.spreadM.toFixed(1)}m, ${conv.count} hits)`);
-                alert(`Transmitted CONVERGED coordinates to GCS:\nLat: ${conv.lat.toFixed(6)}\nLon: ${conv.lon.toFixed(6)}\nSpread: ±${conv.spreadM.toFixed(1)}m\nBased on: ${conv.count} hits`);
+                _transmitToGCS(conv.lat, conv.lon, conv.spreadM, conv.count)
+                    .then(() => alert(`Transmitted CONVERGED coordinates to GCS:\nLat: ${conv.lat.toFixed(6)}\nLon: ${conv.lon.toFixed(6)}\nSpread: ±${conv.spreadM.toFixed(1)}m\nBased on: ${conv.count} hits`))
+                    .catch(e => alert(`Transmission failed: ${e}`));
             } else if (_estimationHits.length === 1) {
                 // Single hit — transmit directly
                 const hit = _estimationHits[0];
                 console.log(`[Telemetry] TRANSMITTING SINGLE: ${hit.lat}, ${hit.lon}`);
-                alert(`Transmitted coordinates to GCS:\nLat: ${hit.lat.toFixed(6)}\nLon: ${hit.lon.toFixed(6)}`);
+                _transmitToGCS(hit.lat, hit.lon, 0, 1)
+                    .then(() => alert(`Transmitted coordinates to GCS:\nLat: ${hit.lat.toFixed(6)}\nLon: ${hit.lon.toFixed(6)}`))
+                    .catch(e => alert(`Transmission failed: ${e}`));
             }
         });
     });
@@ -412,6 +429,8 @@
         elUnits.dataset.prev = elUnits.value;
         if (window._syncMaskUI) window._syncMaskUI();
         if (_lastData) _processData(_lastData);
+        _renderEstimationLog();
+        _refreshGTList();
     });
     // Trigger initial label sync
     elUnits.dataset.prev = elUnits.value;
@@ -609,7 +628,7 @@
         }
         
         if (window.clearMask) window.clearMask();
-        window.drawDefaultMask(widthMeters, heightMeters, '#9b59b6', oldCenterLat, oldCenterLng);
+        window.drawDefaultMask(widthMeters, heightMeters, undefined, oldCenterLat, oldCenterLng);
         const toggle = document.getElementById('btn-draw-mask-toggle');
         if (toggle) toggle.checked = true;
     };
@@ -757,6 +776,14 @@
                 modeBadge.style.color = '#fff';
                 modeBadge.style.border = 'none';
             }
+        } else if (data?.source === 'replay') {
+            if (modeBadge) {
+                modeBadge.textContent = 'REPLAY';
+                modeBadge.className = 'badge badge-mock';
+                modeBadge.style.background = 'rgba(255,184,77,0.15)';
+                modeBadge.style.color = '#ffb84d';
+                modeBadge.style.border = '1px solid rgba(255,184,77,0.3)';
+            }
         } else if (data?.source === 'waiting') {
             if (modeBadge) {
                 modeBadge.textContent = 'WAITING';
@@ -765,6 +792,11 @@
                 modeBadge.style.color = '';
                 modeBadge.style.border = '';
             }
+        }
+
+        // Sync replay transport UI if in replay mode
+        if (data?.playback) {
+            _syncReplayTransport(data.playback);
         }
 
         let history = data?.observation_history ?? [];
@@ -849,6 +881,400 @@
 
     DataFeed.onData(_processData);
 
+    // ── GCS Bridge ─────────────────────────────────────────────────
+    async function _transmitToGCS(lat, lon, spread, count) {
+        const url = window.location.origin + '/api/transmit';
+        const res = await fetch(url, {
+            method: 'POST',
+            body: JSON.stringify({ lat, lon, spread_m: spread, count })
+        });
+        if (!res.ok) {
+            throw new Error(`Server returned ${res.status}`);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ── PLOT COORDINATE WIRING ────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════
+
+    let _lastResult = null;       // Track latest triangulation for distance calc
+    let _referenceMarkerId = null; // Which marker is the user's reference
+
+    // Override the updateResultPanel to also capture the result for distance calc
+    const _origUpdateResultPanel = updateResultPanel;
+    updateResultPanel = function(data, result, validObs) {
+        _lastResult = result;
+        _origUpdateResultPanel(data, result, validObs);
+        _refreshGTList();
+        _updateRefDistance();
+    };
+
+    document.getElementById('btn-gt-submit')?.addEventListener('click', () => {
+        const latEl = document.getElementById('gt-lat');
+        const lonEl = document.getElementById('gt-lon');
+        const labelEl = document.getElementById('gt-label');
+        
+        const lat = parseFloat(latEl?.value);
+        const lon = parseFloat(lonEl?.value);
+        const label = labelEl?.value?.trim() || '';
+        
+        if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+            alert('Please enter valid latitude (-90 to 90) and longitude (-180 to 180).');
+            return;
+        }
+        
+        const obj = MapView.addGroundTruth(lat, lon, label);
+        
+        // Auto-set as reference if it's the first marker
+        if (obj && MapView.getGroundTruthMarkers().length === 1) {
+            _referenceMarkerId = obj.id;
+        }
+        
+        _refreshGTList();
+        _updateRefDistance();
+        
+        // Clear inputs for next entry
+        if (latEl) latEl.value = '';
+        if (lonEl) lonEl.value = '';
+        if (labelEl) labelEl.value = '';
+    });
+
+    // Also allow Enter key in lat/lon fields to submit
+    ['gt-lat', 'gt-lon', 'gt-label'].forEach(id => {
+        document.getElementById(id)?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('btn-gt-submit')?.click();
+            }
+        });
+    });
+
+    function _refreshGTList() {
+        const listEl = document.getElementById('gt-list');
+        if (!listEl) return;
+        
+        const markers = MapView.getGroundTruthMarkers();
+        if (markers.length === 0) {
+            listEl.innerHTML = '';
+            _referenceMarkerId = null;
+            _updateRefDistance();
+            return;
+        }
+
+        // If the current reference was removed, clear it
+        if (_referenceMarkerId && !markers.find(m => m.id === _referenceMarkerId)) {
+            _referenceMarkerId = null;
+        }
+
+        const unit = document.getElementById('setting-units')?.value || 'metric';
+        
+        listEl.innerHTML = markers.map(gt => {
+            const isRef = gt.id === _referenceMarkerId;
+            
+            // Reference toggle button
+            const refBtn = isRef
+                ? `<span class="gt-ref-badge" title="Active reference">REF</span>`
+                : `<button class="gt-ref-btn" onclick="window._setGTRef(${gt.id})" title="Set as reference">Set Ref</button>`;
+
+            // Distance from triangulation result
+            let distText = '';
+            if (_lastResult && _lastResult.lat && _lastResult.lon) {
+                const distM = _haversineM(_lastResult.lat, _lastResult.lon, gt.lat, gt.lon);
+                if (unit === 'imperial') {
+                    const distFt = distM * 3.28084;
+                    distText = distFt > 5280 ? `${(distFt/5280).toFixed(2)} mi` : `${distFt.toFixed(0)} ft`;
+                } else {
+                    distText = distM > 1000 ? `${(distM/1000).toFixed(2)} km` : `${distM.toFixed(0)} m`;
+                }
+                distText = `Δ ${distText}`;
+            }
+
+            return `<div class="gt-item ${isRef ? 'gt-item-active' : ''}">
+                <div class="gt-item-info">
+                    <span class="gt-item-label">${gt.label}</span>
+                    <span class="gt-item-coords">${gt.lat.toFixed(6)}, ${gt.lon.toFixed(6)}</span>
+                </div>
+                ${distText ? `<span class="gt-item-dist">${distText}</span>` : ''}
+                ${refBtn}
+                <button class="gt-item-remove" onclick="window._removeGT(${gt.id})" title="Remove">✕</button>
+            </div>`;
+        }).join('');
+    }
+
+    // Update the Δ REF. DISTANCE row in the Triangulation Result card
+    function _updateRefDistance() {
+        const row = document.getElementById('res-ref-row');
+        const distEl = document.getElementById('res-ref-dist');
+        if (!row || !distEl) return;
+
+        if (!_referenceMarkerId) {
+            row.style.display = 'none';
+            distEl.textContent = '—';
+            return;
+        }
+
+        const ref = MapView.getGroundTruthMarkers().find(m => m.id === _referenceMarkerId);
+        if (!ref || !_lastResult || !_lastResult.lat || !_lastResult.lon) {
+            row.style.display = 'flex';
+            distEl.textContent = '—';
+            return;
+        }
+
+        const distM = _haversineM(_lastResult.lat, _lastResult.lon, ref.lat, ref.lon);
+        const unit = document.getElementById('setting-units')?.value || 'metric';
+        let text;
+        if (unit === 'imperial') {
+            const ft = distM * 3.28084;
+            text = ft >= 5280 ? `${(ft/5280).toFixed(2)} mi` : `${ft.toFixed(1)} ft`;
+        } else {
+            text = distM >= 1000 ? `${(distM/1000).toFixed(2)} km` : `${distM.toFixed(1)} m`;
+        }
+
+        row.style.display = 'flex';
+        distEl.textContent = `${text}  (${ref.label})`;
+    }
+
+    // Haversine helper for distance calculation
+    function _haversineM(lat1, lon1, lat2, lon2) {
+        const R = 6371000;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    // Global handlers
+    window._removeGT = function(id) {
+        if (_referenceMarkerId === id) _referenceMarkerId = null;
+        MapView.removeGroundTruth(id);
+        _refreshGTList();
+        _updateRefDistance();
+    };
+
+    window._setGTRef = function(id) {
+        _referenceMarkerId = id;
+        _refreshGTList();
+        _updateRefDistance();
+    };
+
+    // ═══════════════════════════════════════════════════════════════
+    // ── REPLAY TAB WIRING ─────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════
+
+    let _replayActive = false;
+
+    // ── File List ──
+    async function _fetchReplayFiles() {
+        const list = document.getElementById('replay-file-list');
+        if (!list) return;
+        list.innerHTML = '<div class="replay-file-placeholder">Loading files...</div>';
+        try {
+            const resp = await fetch('/api/replay/files');
+            const data = await resp.json();
+            if (!data.files || data.files.length === 0) {
+                list.innerHTML = '<div class="replay-file-placeholder">No replay files found.</div>';
+                return;
+            }
+            list.innerHTML = '';
+            data.files.forEach(file => {
+                const item = document.createElement('div');
+                item.className = 'replay-file-item';
+                item.innerHTML = `
+                    <span class="replay-file-type type-${file.type}">${file.type.replace(/_/g, ' ')}</span>
+                    <span class="replay-file-name" title="${file.path}">${file.name}</span>
+                    <span class="replay-file-meta">${file.size_kb} KB</span>
+                    <button class="replay-file-load-btn">LOAD</button>
+                `;
+                item.querySelector('.replay-file-load-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    _loadReplayFile(file.path, file.name);
+                });
+                list.appendChild(item);
+            });
+        } catch (e) {
+            list.innerHTML = '<div class="replay-file-placeholder">Error loading file list.</div>';
+            console.error('[Replay] File list error:', e);
+        }
+    }
+
+    // ── Load a file for replay ──
+    async function _loadReplayFile(path, name) {
+        try {
+            const resp = await fetch('/api/replay/load', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path })
+            });
+            const data = await resp.json();
+            if (data.error) {
+                alert('Load failed: ' + data.error);
+                return;
+            }
+            _replayActive = true;
+            _updateReplayUI(true, data.filename, data.total);
+            // Sync settings toggle
+            const toggle = document.getElementById('setting-replay-mode');
+            if (toggle) toggle.checked = true;
+            console.log(`[Replay] Loaded ${data.total} waypoints from ${data.filename}`);
+        } catch (e) {
+            alert('Failed to load replay: ' + e.message);
+        }
+    }
+
+    function _updateReplayUI(active, filename, total) {
+        const badge = document.getElementById('replay-status-badge');
+        const transport = document.getElementById('replay-transport-section');
+        const nameEl = document.getElementById('replay-loaded-name');
+        const countEl = document.getElementById('replay-loaded-count');
+
+        if (active) {
+            if (badge) { badge.className = 'replay-badge replay-badge-active'; badge.textContent = 'ACTIVE'; }
+            if (transport) { transport.style.opacity = '1'; transport.style.pointerEvents = 'auto'; }
+            if (nameEl) nameEl.textContent = filename || 'Loaded';
+            if (countEl) countEl.textContent = `${total || 0} waypoints`;
+        } else {
+            if (badge) { badge.className = 'replay-badge replay-badge-inactive'; badge.textContent = 'INACTIVE'; }
+            if (transport) { transport.style.opacity = '0.4'; transport.style.pointerEvents = 'none'; }
+            if (nameEl) nameEl.textContent = 'No file loaded';
+            if (countEl) countEl.textContent = '0 waypoints';
+        }
+    }
+
+    // ── Transport Controls ──
+    async function _playbackAction(action, value) {
+        try {
+            const body = { action };
+            if (value !== undefined) body.value = value;
+            await fetch('/api/playback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+        } catch (e) {
+            console.error('[Replay] Playback action error:', e);
+        }
+    }
+
+    function _syncReplayTransport(pb) {
+        if (!pb) return;
+        const posEl = document.getElementById('rb-pos');
+        const scrubber = document.getElementById('rb-scrubber');
+        const playBtn = document.getElementById('rb-play-pause');
+
+        if (posEl) posEl.textContent = `${pb.index} / ${pb.total}`;
+        if (scrubber) {
+            scrubber.max = pb.total || 1;
+            scrubber.value = pb.index;
+        }
+        if (playBtn) {
+            if (pb.paused) {
+                playBtn.textContent = '\u25b6';
+                playBtn.classList.add('paused');
+            } else {
+                playBtn.textContent = '\u23f8';
+                playBtn.classList.remove('paused');
+            }
+        }
+    }
+
+    // Wire up transport buttons
+    document.getElementById('rb-play-pause')?.addEventListener('click', () => {
+        const btn = document.getElementById('rb-play-pause');
+        const isPaused = btn?.classList.contains('paused');
+        _playbackAction(isPaused ? 'play' : 'pause');
+    });
+    document.getElementById('rb-forward')?.addEventListener('click', () => _playbackAction('forward'));
+    document.getElementById('rb-rewind')?.addEventListener('click', () => _playbackAction('rewind'));
+    document.getElementById('rb-reset')?.addEventListener('click', () => _playbackAction('reset'));
+    document.getElementById('rb-end')?.addEventListener('click', () => {
+        const scrubber = document.getElementById('rb-scrubber');
+        if (scrubber) _playbackAction('seek', parseInt(scrubber.max));
+    });
+    document.getElementById('rb-scrubber')?.addEventListener('input', (e) => {
+        _playbackAction('seek', parseInt(e.target.value));
+    });
+    document.getElementById('rb-speed')?.addEventListener('change', (e) => {
+        _playbackAction('set_speed', parseFloat(e.target.value));
+    });
+
+    // ── Stop Replay (back to live) ──
+    document.getElementById('btn-replay-stop')?.addEventListener('click', async () => {
+        try {
+            await fetch('/api/replay/stop', { method: 'POST' });
+            _replayActive = false;
+            _updateReplayUI(false);
+            const toggle = document.getElementById('setting-replay-mode');
+            if (toggle) toggle.checked = false;
+            console.log('[Replay] Stopped, back to live mode.');
+        } catch (e) {
+            console.error('[Replay] Stop error:', e);
+        }
+    });
+
+    // ── Refresh button ──
+    document.getElementById('btn-replay-refresh')?.addEventListener('click', _fetchReplayFiles);
+
+    // ── Upload ──
+    const uploadZone = document.getElementById('replay-upload-zone');
+    const fileInput = document.getElementById('replay-file-input');
+    const uploadStatus = document.getElementById('replay-upload-status');
+
+    uploadZone?.addEventListener('click', () => fileInput?.click());
+    uploadZone?.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+    uploadZone?.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+    uploadZone?.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadZone.classList.remove('drag-over');
+        if (e.dataTransfer.files.length > 0) _uploadFile(e.dataTransfer.files[0]);
+    });
+    fileInput?.addEventListener('change', () => {
+        if (fileInput.files.length > 0) _uploadFile(fileInput.files[0]);
+    });
+
+    async function _uploadFile(file) {
+        if (uploadStatus) { uploadStatus.style.display = 'block'; uploadStatus.textContent = `Uploading ${file.name}...`; uploadStatus.style.color = 'var(--text-secondary)'; }
+        const form = new FormData();
+        form.append('file', file);
+        try {
+            const resp = await fetch('/api/replay/upload', { method: 'POST', body: form });
+            const data = await resp.json();
+            if (data.error) {
+                if (uploadStatus) { uploadStatus.textContent = `Error: ${data.error}`; uploadStatus.style.color = 'var(--accent-red)'; }
+                return;
+            }
+            if (uploadStatus) { uploadStatus.textContent = `\u2713 Uploaded ${data.name} (${data.size_kb} KB)`; uploadStatus.style.color = 'var(--accent-green)'; }
+            _fetchReplayFiles(); // refresh list
+        } catch (e) {
+            if (uploadStatus) { uploadStatus.textContent = `Upload failed: ${e.message}`; uploadStatus.style.color = 'var(--accent-red)'; }
+        }
+    }
+
+    // ── Settings Toggle ──
+    const elReplayMode = document.getElementById('setting-replay-mode');
+    elReplayMode?.addEventListener('change', async () => {
+        if (elReplayMode.checked) {
+            // Just switch to replay tab — user needs to pick a file
+            switchTab('replay');
+        } else {
+            // Stop replay, back to live
+            try {
+                await fetch('/api/replay/stop', { method: 'POST' });
+                _replayActive = false;
+                _updateReplayUI(false);
+            } catch (e) { console.error(e); }
+        }
+    });
+
+    // ── Initial load of file list when replay tab is first shown ──
+    let _replayFilesLoaded = false;
+    const origSwitchTab = switchTab;
+    switchTab = function(targetId) {
+        origSwitchTab(targetId);
+        if (targetId === 'replay' && !_replayFilesLoaded) {
+            _replayFilesLoaded = true;
+            _fetchReplayFiles();
+        }
+    };
+
     // ── Eager Map Init ─────────────────────────────────────────────
     requestAnimationFrame(() => {
         MapView.init('map');
@@ -865,3 +1291,4 @@
     });
 
 })();
+

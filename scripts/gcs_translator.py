@@ -8,6 +8,8 @@ import struct
 import socket
 import threading
 import queue
+import os
+from pathlib import Path
 from enum import IntEnum
 try:
     from pymavlink import mavutil
@@ -174,7 +176,7 @@ def main():
     try:
         # Define destination GCS laptop MAC address.
         from PacketLibrary.PacketLibrary import PacketLibrary
-        PacketLibrary.SetGCSMACAddress("000000000000FFFF")
+        PacketLibrary.SetGCSMACAddress("0013A2004298267E")
         
         LaunchVehicleXBee(get_xbee_port())
         xb_mode = 'real'
@@ -224,6 +226,15 @@ def main():
                 # We map 4=ACTIVE → 1 (nominal), all others → 0 (not ready).
                 mav_state = getattr(msg, 'system_status', 0)
                 telemetry.VehicleStatus = 1 if mav_state == 4 else 0
+            elif msg_type == 'DEBUG_VECT':
+                # Intercept upstream target coordinates from Kraken Server
+                raw_name = getattr(msg, 'name', '')
+                msg_name = (raw_name.decode('utf-8', 'ignore') if isinstance(raw_name, bytes) else str(raw_name)).strip('\x00')
+                if msg_name == 'KRAKEN_TGT':
+                    telemetry.MessageLat = float(msg.x)
+                    telemetry.MessageLon = float(msg.y)
+                    telemetry._last_target_mtime = time.time()
+                    logger.info(f"Intercepted Target from upstream MAVLink: {msg.x}, {msg.y}")
 
         current_time = time.time()
         
@@ -267,10 +278,14 @@ def main():
             # --- DEFAULT GCS FIELDS ---
             # vehicle_status is now updated live from HEARTBEAT.system_status above.
             # patient_status: Needs to be ingested from an external patient monitoring system.
-            # message_flag: GCS operational intent (0=No Message, 1=Package Location, 2=Patient Location).
-            #               Hardcoded to 0 — MAVLink has no native equivalent.
+            
             telemetry.MessageFlag = 0
             telemetry.PatientStatus = 0
+            
+            # --- KRAKEN GCS BRIDGE ---
+            # If we received a target via MAVLink recently (e.g. within this session), flag it
+            if getattr(telemetry, '_last_target_mtime', 0) > 0:
+                telemetry.MessageFlag = 2
             
             # Encode and transmit telemetry over XBee (real or mock).
             try:
@@ -299,7 +314,10 @@ def main():
                         "battery": raw_battery_mv,
                         "hex_payload": hex_str,
                         "last_updated": telemetry.LastUpdated,
-                        "latest_command": latest_command
+                        "latest_command": latest_command,
+                        "message_flag": telemetry.MessageFlag,
+                        "target_lat": getattr(telemetry, 'MessageLat', 0.0),
+                        "target_lon": getattr(telemetry, 'MessageLon', 0.0)
                     }
                     with open('/tmp/telemetry.json', 'w') as f:
                         json.dump(state_dump, f)

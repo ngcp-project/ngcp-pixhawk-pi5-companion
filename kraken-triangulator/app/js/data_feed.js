@@ -18,6 +18,7 @@ const DataFeed = (() => {
     let _pollMs    = 2000;
     let _listeners = [];
     let _errorCount = 0;
+    let _currentMode = 'mock';
 
     function _notifyListeners(data) {
         _listeners.forEach(fn => {
@@ -32,11 +33,15 @@ const DataFeed = (() => {
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
             _errorCount = 0;
-            _setHealthStatus(true, data.source === 'live' || data.source === 'udp_stream' ? 'live' : 'waiting');
+            const mode = data.source === 'udp_stream' ? 'live'
+                       : data.source === 'replay' ? 'replay'
+                       : 'mock';
+            _currentMode = mode;
+            _setHealthStatus(true, mode);
             _notifyListeners(data);
         } catch (err) {
             _errorCount++;
-            _setHealthStatus(false, 'waiting');
+            _setHealthStatus(false, _currentMode || 'mock');
             if (_errorCount <= 3) {
                 console.warn(`[DataFeed] Fetch error (${_errorCount}):`, err.message);
             }
@@ -48,8 +53,16 @@ const DataFeed = (() => {
         const badge = document.getElementById('mode-badge');
         if (!dot || !badge) return;
         dot.className  = 'health-dot ' + (online ? 'online' : 'offline');
-        badge.className = 'badge ' + (mode === 'live' ? 'badge-live' : 'badge-waiting');
-        badge.textContent = mode === 'live' ? 'LIVE DATA' : 'WAITING FOR DATA';
+        if (mode === 'live') {
+            badge.className = 'badge badge-live';
+            badge.textContent = 'LIVE DATA';
+        } else if (mode === 'replay') {
+            badge.className = 'badge badge-mock';
+            badge.textContent = 'REPLAY';
+        } else {
+            badge.className = 'badge badge-mock';
+            badge.textContent = 'MOCK DATA';
+        }
     }
 
     return {

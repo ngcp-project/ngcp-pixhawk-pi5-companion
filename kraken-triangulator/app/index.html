@@ -71,6 +71,12 @@
                 </svg>
                 Estimation Map
             </button>
+            <button class="tab-btn" data-tab="replay" id="tab-replay">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                Replay
+            </button>
             <button class="tab-btn" data-tab="settings" id="tab-settings">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="3"/>
@@ -108,6 +114,36 @@
                                 <span class="result-label">OBS. USED / TOTAL</span>
                                 <span class="result-value mono" id="res-stations">—</span>
                             </div>
+                            <div class="result-item" id="res-ref-row" style="display:none; border-top:1px solid var(--border); padding-top:8px; margin-top:4px;">
+                                <span class="result-label" style="color:var(--accent-green);">Δ REF. DISTANCE</span>
+                                <span class="result-value mono" id="res-ref-dist" style="color:var(--accent-cyan);">—</span>
+                            </div>
+                        </div>
+                        <div class="sidebar-card" id="plot-coord-card">
+                            <h3>Plot Coordinate</h3>
+                            <p style="font-size:0.68rem; color:var(--text-muted); margin-bottom:10px;">
+                                Place a marker at any coordinate — ground truth, POI, or reference point.
+                            </p>
+                            <div class="gt-input-row">
+                                <div class="gt-input-group">
+                                    <label class="setting-label-tiny" for="gt-lat">Latitude</label>
+                                    <input type="number" id="gt-lat" class="setting-input-tiny" step="0.000001" placeholder="34.057000">
+                                </div>
+                                <div class="gt-input-group">
+                                    <label class="setting-label-tiny" for="gt-lon">Longitude</label>
+                                    <input type="number" id="gt-lon" class="setting-input-tiny" step="0.000001" placeholder="-117.821000">
+                                </div>
+                            </div>
+                            <div class="gt-input-row" style="margin-top:6px;">
+                                <div class="gt-input-group" style="flex:1;">
+                                    <label class="setting-label-tiny" for="gt-label">Label (optional)</label>
+                                    <input type="text" id="gt-label" class="setting-input-tiny" placeholder="e.g. Ground Truth, POI">
+                                </div>
+                            </div>
+                            <button class="btn-secondary" id="btn-gt-submit" style="width:100%; margin-top:8px;">
+                                Place Marker
+                            </button>
+                            <div id="gt-list" style="margin-top:10px;"></div>
                         </div>
                         <div class="sidebar-card" id="station-list-card">
                             <div class="card-header-flex" style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
@@ -219,6 +255,7 @@
                                 <span class="result-value mono" id="res-timestamp">—</span>
                             </div>
                         </div>
+
                         <div class="sidebar-card" style="margin-top: 10px; border-top: 1px solid var(--border-color);">
                             <button class="btn-secondary" id="btn-master-clear" style="width: 100%; border-color: #e74c3c; color: #ff6b81;" title="Wipe all data arrays">Clear All</button>
                         </div>
@@ -321,6 +358,78 @@
             </div>
 
             <!-- ── Settings View ── -->
+
+            <!-- ── Replay Tab ── -->
+            <div class="tab-panel" id="panel-replay">
+                <div id="replay-container">
+                    <!-- Replay Header -->
+                    <div id="replay-header">
+                        <div class="replay-header-left">
+                            <h2>Sensor Fusion Replay</h2>
+                            <p class="replay-subtitle">Load and replay recorded bearing data files</p>
+                        </div>
+                        <div class="replay-header-right">
+                            <span id="replay-status-badge" class="replay-badge replay-badge-inactive">INACTIVE</span>
+                        </div>
+                    </div>
+
+                    <div id="replay-body">
+                        <!-- File Browser -->
+                        <div class="replay-section">
+                            <h3>Available Files</h3>
+                            <div id="replay-file-list" class="replay-file-list">
+                                <div class="replay-file-placeholder">Loading files...</div>
+                            </div>
+                            <button class="btn-secondary" id="btn-replay-refresh" style="width:100%; margin-top:8px;">Refresh File List</button>
+                        </div>
+
+                        <!-- Upload -->
+                        <div class="replay-section">
+                            <h3>Upload File</h3>
+                            <div class="replay-upload-zone" id="replay-upload-zone">
+                                <input type="file" id="replay-file-input" accept=".json,.jsonl" style="display:none">
+                                <p>Drop a <code>.json</code> or <code>.jsonl</code> file here, or click to browse</p>
+                            </div>
+                            <div id="replay-upload-status" style="display:none; margin-top:8px; font-size:0.78rem;"></div>
+                        </div>
+
+                        <!-- Playback Transport -->
+                        <div class="replay-section" id="replay-transport-section" style="opacity:0.4; pointer-events:none;">
+                            <h3>Playback Controls</h3>
+                            <div id="replay-file-info" class="replay-file-info">
+                                <span id="replay-loaded-name">No file loaded</span>
+                                <span id="replay-loaded-count" class="mono">0 waypoints</span>
+                            </div>
+                            <div id="replay-transport">
+                                <div class="replay-transport-row">
+                                    <button class="pb-btn" id="rb-reset" title="Reset to start">⏮</button>
+                                    <button class="pb-btn" id="rb-rewind" title="Step backward">⏪</button>
+                                    <button class="pb-btn pb-btn-main" id="rb-play-pause" title="Play / Pause">▶</button>
+                                    <button class="pb-btn" id="rb-forward" title="Step forward">⏩</button>
+                                    <button class="pb-btn" id="rb-end" title="Jump to end">⏭</button>
+                                </div>
+                                <div class="replay-transport-row">
+                                    <span class="pb-pos" id="rb-pos">0 / 0</span>
+                                    <input type="range" id="rb-scrubber" min="1" max="1" value="1" style="flex:1;">
+                                    <label class="pb-speed-label">
+                                        Speed
+                                        <select id="rb-speed">
+                                            <option value="0.25">0.25×</option>
+                                            <option value="0.5">0.5×</option>
+                                            <option value="1" selected>1×</option>
+                                            <option value="2">2×</option>
+                                            <option value="4">4×</option>
+                                            <option value="10">10×</option>
+                                            <option value="50">50×</option>
+                                        </select>
+                                    </label>
+                                </div>
+                            </div>
+                            <button class="btn-secondary" id="btn-replay-stop" style="width:100%; margin-top:12px; border-color:#e74c3c; color:#ff6b81;">⏹ Stop Replay — Return to Live</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div class="tab-panel" id="panel-settings">
                 <div id="settings-container">
                     <div class="settings-section">
@@ -333,6 +442,13 @@
                             <label class="setting-row" title="Frequency in milliseconds that the GUI polls the python server for new bearing updates.">
                                 <span class="setting-label">Poll Interval (ms)</span>
                                 <input type="number" id="setting-poll-interval" class="setting-input" value="2000" min="500" max="30000">
+                            </label>
+                            <label class="setting-row" title="When enabled, the server switches to Replay mode, disabling live UDP telemetry. Load a file in the Replay tab to begin playback.">
+                                <span class="setting-label">Replay Mode</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-replay-mode">
+                                    <span class="slider"></span>
+                                </label>
                             </label>
                         </div>
                     </div>
@@ -424,7 +540,7 @@
                     <div class="settings-section">
                         <h2>About</h2>
                         <p class="about-text">
-                            KrakenSDR Triangulator v1.1.0 (Live Only)<br>
+                            KrakenSDR Triangulator v1.7.0<br>
                             NGCP Pixhawk ↔ Pi 5 Companion — Commander Laptop Tool<br>
                             Built for verifying KrakenSDR DOA bearing estimates.
                         </p>
