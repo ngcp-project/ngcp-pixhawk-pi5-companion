@@ -27,7 +27,11 @@ sys.path.append('/home/ngcp25/gcs-infrastructure/lib/gcs-packet')
 sys.path.append('/home/ngcp25/gcs-infrastructure/lib/gcs-packet/Packet')
 sys.path.append('/home/ngcp25/gcs-infrastructure/lib/xbee-python/src')
 try:
-    from Packet.Telemetry.Telemetry import Telemetry
+    # Import Telemetry using the same path that VehicleXBee.py uses internally
+    # ('Telemetry.Telemetry', not 'Packet.Telemetry.Telemetry') so that
+    # isinstance(obj, Telemetry) inside RunTelemetryThread resolves to the
+    # same class object without needing to modify the GCS subteam's library.
+    from Telemetry.Telemetry import Telemetry
     from Infrastructure.InfrastructureInterface import LaunchVehicleXBee, SendTelemetry, ReceiveCommand
     from Infrastructure.PacketQueue import CommandQueue
     print('[gcs_translator] GCS modules loaded (InfrastructureInterface API).')
