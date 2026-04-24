@@ -1,4 +1,9 @@
 #!/home/ngcp25/.local/share/pipx/venvs/mavproxy/bin/python
+# NOTE (code reviewers): The shebang above is intentionally Pi 5-specific.
+# This script runs on the Raspberry Pi 5 companion computer under the MAVProxy
+# virtual environment (pipx), which is the only Python env on the Pi that has
+# pymavlink installed. Do not change this to /usr/bin/env python3 — the system
+# Python on the Pi does not have the required dependencies.
 import sys
 import time
 import math
@@ -17,9 +22,27 @@ except ImportError:
     print('pymavlink not installed. Run: pip install pymavlink')
     sys.exit(1)
 
-# Import GCS Modules from gcs-infrastructure git submodule.
-# gcs-infrastructure must be initialised as a submodule:
+# ---------------------------------------------------------------------------
+# GCS Infrastructure Library (consumer-only submodule)
+# ---------------------------------------------------------------------------
+# gcs-infrastructure is owned and maintained by the GCS Subteam.
+# MRA is a READ-ONLY consumer. Do NOT commit to that repo directly.
+#
+# It is registered as a git submodule at the repo root. To initialise:
 #   git submodule update --init --recursive
+#
+# The path entries below are resolved relative to THIS file's location so
+# this script works on any machine without hardcoded paths:
+#   Path(__file__).parent.parent = repo root
+#   repo root / gcs-infrastructure = submodule root
+#
+# IMPORTANT (module aliasing): Telemetry MUST be imported as
+#   'from Telemetry.Telemetry import Telemetry'
+# NOT as 'from Packet.Telemetry.Telemetry import Telemetry'.
+# Both resolve to the same file, but Python caches them under different keys.
+# VehicleXBee.RunTelemetryThread uses isinstance(obj, Telemetry), which will
+# silently return False (dropping all packets) if the class identity differs.
+# See: MRA Consumer Bug Log, Bug #001 for the full root cause analysis.
 #
 _GCS_BASE = Path(__file__).resolve().parent.parent / 'gcs-infrastructure'
 sys.path.append(str(_GCS_BASE))
@@ -258,8 +281,18 @@ def main():
                         cmd_name = type(cmd_obj).__name__
                         logger.info(f'Received GCS command: {cmd_name}')
                         latest_command = {"command": cmd_name, "timestamp": time.time()}
+                        # Command dispatch: each case corresponds to a command type
+                        # defined in gcs-infrastructure/lib/gcs-packet/Packet/Command/.
+                        # DecodeFormat.Class gives us a typed object (not raw JSON),
+                        # matching the pattern shown in GCSTest.py / VehicleTest.py.
+                        #
+                        # TODO (Aiden / future integration): The cases below marked
+                        # 'not yet implemented' need MAVLink actions wired up once
+                        # the GCS team begins sending these during integration tests.
                         match cmd_obj:
                             case _ if cmd_name == 'EmergencyStop':
+                                # Status=0 means STOP, Status=1 means RESUME.
+                                # Sends MAV_CMD_DO_FLIGHTTERMINATION (ID 185) to FC.
                                 status = getattr(cmd_obj, 'Status', getattr(cmd_obj, 'status', 0))
                                 if status == 0:
                                     logger.info('Sending MAV_CMD_DO_FLIGHTTERMINATION to flight controller!')
@@ -271,8 +304,23 @@ def main():
                                         )
                                     except Exception as mav_exc:
                                         logger.error(f'Failed to send MAVLink command: {mav_exc}')
+                            case _ if cmd_name == 'Heartbeat':
+                                # GCS keepalive. No MAVLink action needed —
+                                # just acknowledge receipt so GCS knows we are alive.
+                                logger.info('Heartbeat received from GCS — connection confirmed.')
+                            case _ if cmd_name == 'AddZone':
+                                # TODO: Geofence upload. cmd_obj.ZoneType and
+                                # cmd_obj.Coordinates contain the zone data.
+                                # Wire up MAV_CMD_DO_FENCE_ENABLE or upload via
+                                # MISSION_ITEM_INT with MAV_MISSION_TYPE_FENCE.
+                                logger.info(f'AddZone received (not yet implemented): {cmd_obj}')
+                            case _ if cmd_name == 'PatientLocation':
+                                # TODO: GCS-pushed patient coordinate. cmd_obj.Coordinate
+                                # contains the (lat, lon) tuple. Forward to autopilot
+                                # or store for Kraken overlay.
+                                logger.info(f'PatientLocation received (not yet implemented): {cmd_obj}')
                             case _:
-                                logger.info(f'Command acknowledged (no MAVLink action defined): {cmd_name}')
+                                logger.warning(f'Unrecognised command type — no action taken: {cmd_name}')
             except Exception as e:
                 logger.error(f"Command receive error: {e}")
         elif xb_mode == 'mock' and xb:
