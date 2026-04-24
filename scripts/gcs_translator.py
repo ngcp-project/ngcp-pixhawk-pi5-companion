@@ -17,27 +17,30 @@ except ImportError:
     print('pymavlink not installed. Run: pip install pymavlink')
     sys.exit(1)
 
-# Import GCS Modules from gcs-infrastructure repo.
-# The repo must be cloned to: /home/ngcp25/gcs-infrastructure
-#   git clone https://github.com/ngcp-project/gcs-infrastructure.git /home/ngcp25/gcs-infrastructure
+# Import GCS Modules from gcs-infrastructure git submodule.
+# gcs-infrastructure must be initialised as a submodule:
+#   git submodule update --init --recursive
 #
-sys.path.append('/home/ngcp25/gcs-infrastructure')
-sys.path.append('/home/ngcp25/gcs-infrastructure/Application')
-sys.path.append('/home/ngcp25/gcs-infrastructure/lib/gcs-packet')
-sys.path.append('/home/ngcp25/gcs-infrastructure/lib/gcs-packet/Packet')
-sys.path.append('/home/ngcp25/gcs-infrastructure/lib/xbee-python/src')
+_GCS_BASE = Path(__file__).resolve().parent.parent / 'gcs-infrastructure'
+sys.path.append(str(_GCS_BASE))
+sys.path.append(str(_GCS_BASE / 'Application'))
+sys.path.append(str(_GCS_BASE / 'lib' / 'gcs-packet'))
+sys.path.append(str(_GCS_BASE / 'lib' / 'gcs-packet' / 'Packet'))
+sys.path.append(str(_GCS_BASE / 'lib' / 'xbee-python' / 'src'))
 try:
     # Import Telemetry using the same path that VehicleXBee.py uses internally
     # ('Telemetry.Telemetry', not 'Packet.Telemetry.Telemetry') so that
     # isinstance(obj, Telemetry) inside RunTelemetryThread resolves to the
     # same class object without needing to modify the GCS subteam's library.
     from Telemetry.Telemetry import Telemetry
+    from Enum import DecodeFormat
     from Infrastructure.InfrastructureInterface import LaunchVehicleXBee, SendTelemetry, ReceiveCommand
     from Infrastructure.PacketQueue import CommandQueue
     print('[gcs_translator] GCS modules loaded (InfrastructureInterface API).')
 except ImportError as e:
     print(f'[gcs_translator] FATAL: Could not import GCS modules: {e}')
-    print('[gcs_translator] Run `git pull && git submodule update --init --recursive` in /home/ngcp25/gcs-infrastructure')
+    print('[gcs_translator] Ensure gcs-infrastructure submodule is initialised:')
+    print('[gcs_translator]   git submodule update --init --recursive')
     sys.exit(1)
 
 # Configuration
@@ -248,24 +251,28 @@ def main():
         if xb_mode == 'real':
             try:
                 if not CommandQueue.empty():
-                    cmd_obj = ReceiveCommand()
+                    # DecodeFormat.Class returns a typed Command object (Heartbeat,
+                    # EmergencyStop, AddZone, PatientLocation) per gcs-infrastructure API.
+                    cmd_obj = ReceiveCommand(DecodeFormat.Class)
                     if cmd_obj:
                         cmd_name = type(cmd_obj).__name__
                         logger.info(f'Received GCS command: {cmd_name}')
                         latest_command = {"command": cmd_name, "timestamp": time.time()}
-                        # Forward EmergencyStop to MAVLink flight controller
-                        if cmd_name == 'EmergencyStop':
-                            status = getattr(cmd_obj, 'Status', getattr(cmd_obj, 'status', 0))
-                            if status == 0:
-                                logger.info('Sending MAV_CMD_DO_FLIGHTTERMINATION to flight controller!')
-                                try:
-                                    mav_connection.mav.command_long_send(
-                                        mav_connection.target_system, mav_connection.target_component,
-                                        mavutil.mavlink.MAV_CMD_DO_FLIGHTTERMINATION, 0,
-                                        1.0, 0, 0, 0, 0, 0, 0
-                                    )
-                                except Exception as mav_exc:
-                                    logger.error(f'Failed to send MAVLink command: {mav_exc}')
+                        match cmd_obj:
+                            case _ if cmd_name == 'EmergencyStop':
+                                status = getattr(cmd_obj, 'Status', getattr(cmd_obj, 'status', 0))
+                                if status == 0:
+                                    logger.info('Sending MAV_CMD_DO_FLIGHTTERMINATION to flight controller!')
+                                    try:
+                                        mav_connection.mav.command_long_send(
+                                            mav_connection.target_system, mav_connection.target_component,
+                                            mavutil.mavlink.MAV_CMD_DO_FLIGHTTERMINATION, 0,
+                                            1.0, 0, 0, 0, 0, 0, 0
+                                        )
+                                    except Exception as mav_exc:
+                                        logger.error(f'Failed to send MAVLink command: {mav_exc}')
+                            case _:
+                                logger.info(f'Command acknowledged (no MAVLink action defined): {cmd_name}')
             except Exception as e:
                 logger.error(f"Command receive error: {e}")
         elif xb_mode == 'mock' and xb:

@@ -109,8 +109,8 @@ def get_xbee_port():
 
 def main():
     print("╔══════════════════════════════════════════════════════╗")
-    print("║        GCS XBee Telemetry Monitor  v1.9.1            ║")
-    print("║        NGCP MRA — Full Packet Decoder                ║")
+    print("║      Vehicle Telemetry Monitor  v1.9.2               ║")
+    print("║      NGCP MRA — GCS Receive Endpoint (Diagnostic)    ║")
     print("╚══════════════════════════════════════════════════════╝")
 
     port = get_xbee_port()
