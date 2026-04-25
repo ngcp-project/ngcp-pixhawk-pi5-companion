@@ -148,24 +148,6 @@ ngcp-pixhawk-pi5-companion/
 
 ---
 
-## SSH Access (Tailscale)
-
-The Pi 5 is reachable via **Tailscale VPN** regardless of network environment. Tailscale assigns a permanent `100.x.x.x` address that bypasses NAT and university firewall blocks.
-
-| Device | Tailscale IP |
-|---|---|
-| GCS Laptop (jannelptop) | `100.99.108.11` |
-| Pi 5 (ngcp25-desktop) | `100.68.238.29` |
-
-SSH via WSL from the laptop:
-```bash
-wsl ssh ngcp25@100.68.238.29
-```
-
-> **Note (Pi 5 sync):** After any push to this repo, SSH in and run `git pull origin main && git submodule update --init gcs-infrastructure` to keep the Pi 5 in sync.
-
----
-
 ## Status
 
 - ✅ UART device mapping confirmed on Pi 5 (`/dev/ttyAMA0`)
