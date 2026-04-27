@@ -1,12 +1,7 @@
-# KrakenSDR Triangulator — Dependencies
+# KrakenSDR Triangulator — Backend Dependencies
 # NOTE: This is deliberately separate from the root requirements.txt (Pi-side deps).
 # Install with: pip install -r requirements.txt
 
-# ── Runtime Dependencies ──
 Flask==3.1.0
 Flask-Cors==5.0.1
 requests==2.32.3     # Used to proxy requests to the real KrakenSDR API (future)
-pymavlink            # MAVLink upstream transmission to Pi 5
-
-# ── Build Dependencies (only needed to create the .exe) ──
-pyinstaller          # Package into standalone Windows executable

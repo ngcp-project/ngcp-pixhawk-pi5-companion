@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """
-kraken_server.py — KrakenSDR Triangulator Server
-=====================================================
-Live-only telemetry server. Receives bearing observations via UDP
-and serves them to the web dashboard.
+kraken_server.py — KrakenSDR Triangulator Server (XBee-Only Architecture)
+=========================================================================
+Single mobile KrakenSDR model with playback controls.
+
+RF Architecture (v2.0+):
+  This server does NOT use MAVLink or pymavlink. Target coordinates are
+  exposed via GET /api/target for the GCS Dashboard to poll and relay to
+  the Pi 5 via XBee PatientLocation command (Command ID 5).
+  The RFD-900x modem and MAVProxy Router are no longer required.
 
 API:
   GET  /api/bearings           — current observation history
-  GET  /api/health             — server health check
+  GET  /api/target             — latest Kraken target for GCS Dashboard
+  POST /api/transmit           — store target coordinates from UI
+  GET  /api/playback           — playback state
+  POST /api/playback           — send playback command
 
 Usage:
     python server/kraken_server.py
@@ -37,17 +45,18 @@ try:
 except ImportError:
     REQUESTS_AVAILABLE = False
 
-try:
-    from pymavlink import mavutil
-    PYMAVLINK_AVAILABLE = True
-except ImportError:
-    PYMAVLINK_AVAILABLE = False
+# NOTE (XBee migration): pymavlink is no longer required on the GCS laptop.
+# Target coordinates are relayed to Pi 5 by the GCS Dashboard via XBee
+# PatientLocation command, not via MAVLink upstream through RFD-900x.
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 PORT            = int(os.environ.get("PORT", 5050))
 KRAKEN_API_URL  = os.environ.get("KRAKEN_API_URL", "")
+BASE_ADVANCE_S  = float(os.environ.get("ADVANCE_EVERY_S", "0.5"))
 
 BASE_DIR        = Path(__file__).resolve().parent.parent
+MOCK_FILE_NAME  = os.environ.get("BEARINGS_FILE", "bearings_20260313_154333.json")
+MOCK_DATA_PATH  = BASE_DIR / "data" / MOCK_FILE_NAME
 APP_DIR         = BASE_DIR / "app"
 UPLOAD_DIR      = BASE_DIR / "data" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -62,20 +71,25 @@ logger = logging.getLogger("kraken_server")
 app = Flask(__name__, static_folder=str(APP_DIR))
 CORS(app)
 
-# ── Live UDP State ────────────────────────────────────────────────────────────
+# ── Playback State (protected by lock) ────────────────────────────────────────
 _lock           = threading.Lock()
+_mock_data      = None
+_waypoints      = []
+_obs_index      = 1        # How many waypoints are visible (1-based)
+_paused         = False
+_speed          = 1.0      # Multiplier: 0.25x, 0.5x, 1x, 2x, 4x
+_last_advance_t = 0.0
+# Observation receive timestamps (system clock, not mock data)
+_obs_timestamps = {}       # { obs_id: ISO timestamp string }
+
+# ── Live UDP State ────────────────────────────────────────────────────────────
+_live_mode      = False
 UDP_PORT        = int(os.environ.get("UDP_PORT", 5051))
 _live_history   = []
 _live_current   = None
 
-# ── Persistent MAVLink Upstream Connection ────────────────────────────────────
-# Binds to port 14551 where the GCS Laptop MAVProxy router sends telemetry.
-# This establishes a bidirectional link: we receive MAVLink data from MAVProxy,
-# and can send packets back (e.g. DEBUG_VECT) which MAVProxy forwards to
-# COM port (RFD-900x) → Pi 5 → gcs_translator.py.
-MAVLINK_UPSTREAM_PORT = int(os.environ.get("MAVLINK_UPSTREAM_PORT", 14551))
-_mav_upstream = None        # Set at startup
-_mav_upstream_ready = False # True once we've received at least one packet
+# ── Target State (for GCS Dashboard polling) ─────────────────────────────────
+_latest_target = None  # Dict: {lat, lon, spread_m, count, timestamp}
 
 def _load_mock():
     global _mock_data, _waypoints, _obs_index, _last_advance_t, _obs_timestamps
@@ -114,15 +128,16 @@ def _advance_waypoint():
         _last_advance_t = now
 
 def _build_response():
-    if _live_history:
+    if _live_mode:
         return {
             "source":              "udp_stream",
-            "frequency_hz":        462637500,
+            "frequency_hz":        _mock_data.get("frequency_hz", 462637500) if _mock_data else 462637500,
             "mode":                "live_telemetry",
-            "doa_method":          "MUSIC",
+            "doa_method":          _mock_data.get("doa_method", "MUSIC") if _mock_data else "MUSIC",
             "current_observation": _live_current,
             "observation_history": _live_history,
-            "expected_target":     None,
+            "expected_target":     _mock_data.get("expected_target") if _mock_data else None,
+            "playback":            None
         }
 
     if not _waypoints:
@@ -180,7 +195,7 @@ def get_bearings():
             resp.raise_for_status()
             return jsonify({"source": "live", "raw": resp.json()})
         except Exception as e:
-            logger.warning(f"Live fetch failed ({e}), waiting for UDP data.")
+            logger.warning(f"Live fetch failed ({e}), falling back to mock.")
 
     with _lock:
         _advance_waypoint()
@@ -261,7 +276,8 @@ def health():
             "status":  "ok",
             "mode":    mode,
             "port":    PORT,
-            "observations": len(_live_history),
+            "index":   _obs_index,
+            "total":   len(_waypoints),
         })
 
 # ── Replay Mode API ────────────────────────────────────────────────────────────
@@ -408,16 +424,22 @@ def stop_replay():
 
 @app.route("/api/transmit", methods=["POST"])
 def transmit():
-    """Bridge endpoint from UI to gcs_translator.py"""
+    """Store target coordinates from UI for GCS Dashboard consumption.
+
+    XBee-only architecture: This endpoint stores the target in memory and
+    on disk. The GCS Dashboard polls GET /api/target to retrieve it, then
+    relays it to the Pi 5 via XBee PatientLocation command (Command ID 5).
+    """
+    global _latest_target
     body = request.get_json(force=True) or {}
     lat = body.get("lat")
     lon = body.get("lon")
     spread_m = body.get("spread_m", 0)
     count = body.get("count", 1)
-    
+
     if lat is None or lon is None:
         return jsonify({"error": "Missing lat/lon"}), 400
-        
+
     payload = {
         "lat": lat,
         "lon": lon,
@@ -425,38 +447,37 @@ def transmit():
         "count": count,
         "timestamp": time.time()
     }
-    
-    # Write to a known file location so gcs_translator.py can read it
-    target_file = Path("/tmp/kraken_gcs_target.json") if os.name != 'nt' else Path(os.environ.get("TEMP", "C:/Temp")) / "kraken_gcs_target.json"
-    
+
+    # Store in memory for GET /api/target polling
+    _latest_target = payload
+
+    # Also persist to disk as a fallback handoff mechanism
+    target_file = Path("/tmp/kraken_gcs_target.json") if os.name != 'nt' \
+        else Path(os.environ.get("TEMP", "C:/Temp")) / "kraken_gcs_target.json"
     try:
-        # Create parent directory if needed
         target_file.parent.mkdir(parents=True, exist_ok=True)
         with open(target_file, "w") as f:
             json.dump(payload, f)
-            
-        # --- UPSTREAM MAVLINK TRANSMISSION ---
-        # Send the target coordinates upstream through the persistent MAVLink
-        # connection. This flows: kraken_server → MAVProxy (port 14551) →
-        # COM13 (RFD-900x) → Pi 5 MAVProxy → gcs_translator.py
-        if _mav_upstream and _mav_upstream_ready:
-            try:
-                _mav_upstream.mav.debug_vect_send(
-                    b'KRAKEN_TGT', int(time.time() * 1e6), lat, lon, spread_m
-                )
-                logger.info(f"Target sent UPSTREAM via MAVLink: {lat}, {lon} (spread={spread_m:.1f}m)")
-            except Exception as mav_e:
-                logger.error(f"MAVLink upstream transmission failed: {mav_e}")
-        elif not PYMAVLINK_AVAILABLE:
-            logger.error("pymavlink is not installed. Run: pip install pymavlink")
-        elif not _mav_upstream_ready:
-            logger.warning("MAVLink upstream not ready — no packets received from MAVProxy yet. "
-                           "Is the GCS Laptop MAVProxy Router running?")
-
-        return jsonify({"status": "ok", "message": "Transmitted successfully"})
     except Exception as e:
-        logger.error(f"Failed to export target: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.warning(f"Could not write target file: {e}")
+
+    logger.info(f"Target stored for GCS Dashboard: {lat}, {lon} "
+                f"(spread={spread_m:.1f}m, {count} hits)")
+    return jsonify({"status": "ok", "message": "Target stored — awaiting GCS Dashboard relay"})
+
+
+@app.route("/api/target", methods=["GET"])
+def get_target():
+    """Returns the latest Kraken target coordinates.
+
+    The GCS Dashboard polls this endpoint and, when a new target is detected,
+    sends a PatientLocation command (Command ID 5) via XBee to the Pi 5.
+    This replaces the old MAVLink upstream path through the RFD-900x.
+    """
+    if _latest_target:
+        return jsonify(_latest_target)
+    return jsonify({"lat": None, "lon": None, "spread_m": None,
+                    "count": None, "timestamp": None})
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
@@ -487,7 +508,7 @@ def _translate_fusion_record(payload):
     return translated
 
 def udp_listener_thread():
-    global _live_history, _live_current
+    global _live_mode, _live_history, _live_current
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("0.0.0.0", UDP_PORT))
@@ -506,77 +527,32 @@ def udp_listener_thread():
             if 'received_at' not in payload:
                 payload['received_at'] = _now_iso()
             with _lock:
+                _live_mode = True
                 _live_history.append(payload)
                 _live_current = payload
         except Exception as e:
             logger.error(f"UDP parse error: {e}")
 
-def _mavlink_drain_thread():
-    """Background thread: drain incoming MAVLink packets to keep the connection alive.
-    Once the first packet arrives from MAVProxy, the return address is learned
-    and _mav_upstream_ready is set to True."""
-    global _mav_upstream_ready
-    while True:
-        try:
-            if _mav_upstream is None:
-                time.sleep(1)
-                continue
-            msg = _mav_upstream.recv_match(blocking=True, timeout=5)
-            if msg and not _mav_upstream_ready:
-                _mav_upstream_ready = True
-                logger.info(f"MAVLink upstream link ESTABLISHED — bidirectional path to MAVProxy confirmed.")
-        except Exception as e:
-            logger.error(f"MAVLink drain error: {e}")
-            time.sleep(1)
+# NOTE (XBee migration): _mavlink_drain_thread removed.
+# MAVLink upstream via RFD-900x is no longer used. Target coordinates
+# are relayed by the GCS Dashboard via XBee PatientLocation command.
 
-def start_server(open_browser=False):
-    """Initialize all background threads and start the Flask server.
-    
-    This function is the single entry point for both direct invocation
-    (python kraken_server.py) and the packaged launcher (launcher.py).
-    
-    Args:
-        open_browser: If True, automatically open the default browser
-                      to the server URL after a short delay.
-    """
-    global _live_mode, _mav_upstream
-
+if __name__ == "__main__":
     _live_mode = True
     logger.info("LIVE UDP MODE FORCED. Mock data disabled.")
-    
+
     # Spin up the background telemetry listener
     threading.Thread(target=udp_listener_thread, daemon=True).start()
 
-    # Establish persistent MAVLink upstream connection for bidirectional
-    # communication with the GCS Laptop MAVProxy Router (RFD-900x link).
-    if PYMAVLINK_AVAILABLE:
-        try:
-            _mav_upstream = mavutil.mavlink_connection(f'udpin:0.0.0.0:{MAVLINK_UPSTREAM_PORT}')
-            logger.info(f"MAVLink upstream bound to udpin:0.0.0.0:{MAVLINK_UPSTREAM_PORT} "
-                        f"— waiting for MAVProxy packets...")
-            threading.Thread(target=_mavlink_drain_thread, daemon=True).start()
-        except Exception as e:
-            logger.error(f"Failed to bind MAVLink upstream on port {MAVLINK_UPSTREAM_PORT}: {e}")
-            _mav_upstream = None
-    else:
-        logger.warning("pymavlink not installed — upstream MAVLink transmission disabled.")
+    # XBee-only architecture: no MAVLink upstream connection needed.
+    # Target coordinates are served via GET /api/target for the GCS
+    # Dashboard to poll and relay via XBee PatientLocation command.
+    logger.info("RF Architecture: XBee-only (no RFD-900x / MAVLink upstream)")
+    logger.info("Target relay: GET /api/target → GCS Dashboard → XBee → Pi 5")
 
     if KRAKEN_API_URL:
         logger.info(f"LIVE KRAKEN MODE — Proxying KrakenSDR API at {KRAKEN_API_URL}")
     else:
         logger.info(f"LIVE UDP MODE — Ready for UDP stream on port {UDP_PORT}.")
-
-    if open_browser:
-        import webbrowser
-        def _open():
-            import time
-            time.sleep(1.5)
-            webbrowser.open(f"http://localhost:{PORT}")
-        threading.Thread(target=_open, daemon=True).start()
-
     logger.info(f"Opening at http://localhost:{PORT}")
     app.run(host="0.0.0.0", port=PORT, debug=False)
-
-
-if __name__ == "__main__":
-    start_server(open_browser=False)

@@ -256,15 +256,11 @@ def main():
                 # We map 4=ACTIVE → 1 (nominal), all others → 0 (not ready).
                 mav_state = getattr(msg, 'system_status', 0)
                 telemetry.VehicleStatus = 1 if mav_state == 4 else 0
-            elif msg_type == 'DEBUG_VECT':
-                # Intercept upstream target coordinates from Kraken Server
-                raw_name = getattr(msg, 'name', '')
-                msg_name = (raw_name.decode('utf-8', 'ignore') if isinstance(raw_name, bytes) else str(raw_name)).strip('\x00')
-                if msg_name == 'KRAKEN_TGT':
-                    telemetry.MessageLat = float(msg.x)
-                    telemetry.MessageLon = float(msg.y)
-                    telemetry._last_target_mtime = time.time()
-                    logger.info(f"Intercepted Target from upstream MAVLink: {msg.x}, {msg.y}")
+            # NOTE (XBee migration): The KRAKEN_TGT DEBUG_VECT interception
+            # block has been removed. Target coordinates from the Kraken
+            # Triangulator now arrive via XBee PatientLocation command
+            # (Command ID 5) from the GCS Dashboard, not via MAVLink
+            # upstream through the RFD-900x. See PatientLocation handler below.
 
         current_time = time.time()
         
@@ -315,10 +311,26 @@ def main():
                                 # MISSION_ITEM_INT with MAV_MISSION_TYPE_FENCE.
                                 logger.info(f'AddZone received (not yet implemented): {cmd_obj}')
                             case _ if cmd_name == 'PatientLocation':
-                                # TODO: GCS-pushed patient coordinate. cmd_obj.Coordinate
-                                # contains the (lat, lon) tuple. Forward to autopilot
-                                # or store for Kraken overlay.
-                                logger.info(f'PatientLocation received (not yet implemented): {cmd_obj}')
+                                # XBee migration: This is the primary path for
+                                # receiving Kraken Triangulator target coordinates.
+                                # Flow: Kraken UI → GET /api/target → GCS Dashboard
+                                #       → XBee PatientLocation → here.
+                                coords = getattr(cmd_obj, 'Coordinates', (0.0, 0.0))
+                                target_lat, target_lon = coords[0], coords[1]
+                                telemetry.MessageLat = target_lat
+                                telemetry.MessageLon = target_lon
+                                telemetry.MessageFlag = 2  # 2 = Patient/Target per GCS spec
+                                telemetry._last_target_mtime = time.time()
+                                logger.info(f'PatientLocation received from GCS Dashboard: '
+                                            f'({target_lat:.7f}, {target_lon:.7f})')
+                                # TODO (autonomy team): Forward target to the autonomy
+                                # engine if it needs the coordinates for mission state
+                                # updates. Options:
+                                #   1. Write to /tmp/kraken_target.json for file-based IPC
+                                #   2. Send MAVLink DO_REPOSITION via local UART to Pixhawk
+                                #   3. Publish to a local UDP socket for the autonomy script
+                                # For now, the target is embedded in the next Telemetry
+                                # packet via MessageLat/MessageLon (MessageFlag=2).
                             case _:
                                 logger.warning(f'Unrecognised command type — no action taken: {cmd_name}')
             except Exception as e:
