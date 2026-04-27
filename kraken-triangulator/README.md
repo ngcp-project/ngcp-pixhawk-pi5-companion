@@ -89,6 +89,78 @@ python server/kraken_server.py
 
 ---
 
+## Packaging as a Standalone Executable
+
+The app can be packaged into a standalone Windows `.exe` so GCS operators can install and run it with **zero Python setup**.
+
+### Prerequisites (Build Machine Only)
+
+- Python 3.8+ with pip
+- [Inno Setup 6](https://jrsoftware.org/isdl.php) — only for creating the installer (optional)
+
+### One-Click Build
+
+```powershell
+# Full build: executable + portable ZIP + installer
+.\build.ps1
+
+# Without installer (no Inno Setup needed)
+.\build.ps1 -SkipInstaller
+```
+
+### What Gets Produced
+
+| Artifact | Location | Description |
+|----------|----------|-------------|
+| Executable folder | `dist/KrakenSDR-Triangulator/` | Run `KrakenSDR-Triangulator.exe` directly |
+| Portable ZIP | `dist/KrakenSDR-Triangulator-v1.7.0-portable.zip` | Extract anywhere and run |
+| Windows Installer | `Output/KrakenSDR-Triangulator-Setup-v1.7.0.exe` | Professional setup wizard with shortcuts |
+
+### GCS Operator Installation
+
+1. Receive the `.exe` installer (or `.zip` for portable use)
+2. Run the installer → **Next → Next → Install**
+3. Launch from the **Desktop shortcut** or Start Menu
+4. The app opens automatically in your default browser at `http://localhost:5050`
+
+> **Note:** The console window stays visible intentionally — it shows server logs, UDP telemetry status, and MAVLink connection state, which are useful during field operations.
+
+---
+
+## Updating the Executable
+
+When you make changes to the app (new features, bug fixes, etc.), rebuilding the executable is straightforward:
+
+### Quick Update Workflow
+
+```powershell
+# 1. Make your code changes (edit server/kraken_server.py, app/js/*.js, etc.)
+
+# 2. Rebuild (takes ~30-60 seconds)
+.\build.ps1
+
+# 3. Distribute the new installer or ZIP to operators
+```
+
+### What Triggers a Rebuild
+
+| Change Type | Rebuild Required? | Notes |
+|-------------|-------------------|-------|
+| Python backend (`server/*.py`) | **Yes** | Run `.\build.ps1` |
+| Frontend (`app/*.html`, `app/js/*.js`, `app/style.css`) | **Yes** | Run `.\build.ps1` |
+| Vendored libraries (`app/vendor/*`) | **Yes** | Only if upgrading Leaflet, Turf, etc. |
+| Sample data (`data/*.json`) | **Yes** | Only if bundled data changes |
+| Configuration (env vars, ports) | **No** | These are set at runtime, not baked in |
+
+### Version Bumping
+
+Update the version in three places:
+1. `app/index.html` → About section (`v1.7.0`)
+2. `installer.iss` → `#define MyAppVersion`
+3. `build.ps1` → `$Version` variable
+
+---
+
 ## License
 
 This is Free and Open Source Software (FOSS) developed for the **Northrop Grumman Collaboration Project** (NGCP). 

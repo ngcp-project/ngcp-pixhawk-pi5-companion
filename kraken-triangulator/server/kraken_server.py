@@ -529,7 +529,18 @@ def _mavlink_drain_thread():
             logger.error(f"MAVLink drain error: {e}")
             time.sleep(1)
 
-if __name__ == "__main__":
+def start_server(open_browser=False):
+    """Initialize all background threads and start the Flask server.
+    
+    This function is the single entry point for both direct invocation
+    (python kraken_server.py) and the packaged launcher (launcher.py).
+    
+    Args:
+        open_browser: If True, automatically open the default browser
+                      to the server URL after a short delay.
+    """
+    global _live_mode, _mav_upstream
+
     _live_mode = True
     logger.info("LIVE UDP MODE FORCED. Mock data disabled.")
     
@@ -554,5 +565,18 @@ if __name__ == "__main__":
         logger.info(f"LIVE KRAKEN MODE — Proxying KrakenSDR API at {KRAKEN_API_URL}")
     else:
         logger.info(f"LIVE UDP MODE — Ready for UDP stream on port {UDP_PORT}.")
+
+    if open_browser:
+        import webbrowser
+        def _open():
+            import time
+            time.sleep(1.5)
+            webbrowser.open(f"http://localhost:{PORT}")
+        threading.Thread(target=_open, daemon=True).start()
+
     logger.info(f"Opening at http://localhost:{PORT}")
     app.run(host="0.0.0.0", port=PORT, debug=False)
+
+
+if __name__ == "__main__":
+    start_server(open_browser=False)

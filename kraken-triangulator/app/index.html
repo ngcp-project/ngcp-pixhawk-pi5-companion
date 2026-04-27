@@ -6,10 +6,10 @@
     <title>KrakenSDR Triangulator — NGCP</title>
     <meta name="description" content="KrakenSDR bearing verification and signal-source triangulation for NGCP UAV operations.">
 
-    <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Leaflet CSS (vendored) -->
+    <link rel="stylesheet" href="vendor/leaflet/leaflet.css"/>
+    <!-- Fonts (vendored) -->
+    <link rel="stylesheet" href="vendor/fonts/fonts.css">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -558,12 +558,12 @@
         </main>
     </div>
 
-    <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-    <!-- Leaflet.heat plugin -->
-    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
-    <!-- Turf JS for Polygon Mathematics -->
-    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <!-- Leaflet JS (vendored) -->
+    <script src="vendor/leaflet/leaflet.js"></script>
+    <!-- Leaflet.heat plugin (vendored) -->
+    <script src="vendor/leaflet-heat/leaflet-heat.js"></script>
+    <!-- Turf JS for Polygon Mathematics (vendored) -->
+    <script src="vendor/turf/turf.min.js"></script>
     <!-- App Modules -->
     <script src="js/triangulation.js"></script>
     <script src="js/map.js"></script>
