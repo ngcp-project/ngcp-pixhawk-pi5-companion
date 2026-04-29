@@ -10,12 +10,8 @@ import math
 import logging
 import json
 import struct
-import socket
-import threading
-import queue
 import os
 from pathlib import Path
-from enum import IntEnum
 try:
     from pymavlink import mavutil
 except ImportError:
@@ -28,13 +24,19 @@ except ImportError:
 # gcs-infrastructure is owned and maintained by the GCS Subteam.
 # MRA is a READ-ONLY consumer. Do NOT commit to that repo directly.
 #
-# It is registered as a git submodule at the repo root. To initialise:
-#   git submodule update --init --recursive
+# TODO (refactor): Migrate to the pip install -e setup documented in the
+# gcs-infrastructure README. The proper approach is:
+#   1. Move submodules under lib/ (gcs-infrastructure, gcs-packet, xbee-python)
+#   2. Run: pip install -e "lib/gcs-infrastructure"
+#          pip install -e "lib/gcs-packet"
+#          pip install -e "lib/xbee-python"
+#   3. Remove all sys.path.append calls below — imports will resolve via
+#      standard Python module resolution.
 #
-# The path entries below are resolved relative to THIS file's location so
-# this script works on any machine without hardcoded paths:
-#   Path(__file__).parent.parent = repo root
-#   repo root / gcs-infrastructure = submodule root
+# The sys.path.append approach below is a TEMPORARY workaround that is
+# brittle and defeats the purpose of Python modules (per Aiden's feedback
+# 4/28/26). It is kept only until the pip install -e migration is completed
+# on both the development laptop and the Pi 5.
 #
 # IMPORTANT (module aliasing): Telemetry MUST be imported as
 #   'from Telemetry.Telemetry import Telemetry'
@@ -80,110 +82,6 @@ def get_xbee_port():
 XBEE_PORT = get_xbee_port()  # Auto-detects USB port
 XBEE_BAUD = 115200
 
-class MockXBee:
-    """Mock XBee interface using UDP for local bidirectional testing."""
-    def __init__(self, port=14551):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind(('127.0.0.1', port))
-        self.sock.setblocking(False)
-        self.ser = True # Bypass none check
-
-    def retrieve_data(self):
-        try:
-            data, _ = self.sock.recvfrom(1024)
-            class MockFrame: pass
-            frame = MockFrame()
-            frame.received_data = data  # Match real XBee library field name
-            return frame
-        except BlockingIOError:
-            return None
-
-    def transmit_data(self, payload, retrieveStatus=False):
-        pass
-
-def process_xbee_command(data, mav_connection, logger):
-    """Parses custom GCS frame bytes and converts back to MAVLink.
-    Command IDs match VehicleXBee.py in gcs-infrastructure:
-      1 = Heartbeat
-      2 = EmergencyStop  (Format: BBB — PAYLOAD_ID, COMMAND_ID, status)
-      3 = KeepIn         (not yet implemented)
-      4 = KeepOut        (not yet implemented)
-      5 = PatientLocation (not yet implemented)
-      6 = SearchArea      (not yet implemented)
-    """
-    #Command ID
-    class Command(IntEnum):
-        Heartbeat = 1
-        EmergencyStop = 2
-        KeepIn = 3
-        KeepOut = 4
-        PatientLocation = 5
-        SearchArea = 6
-    
-    #DEFINE minimum command length
-    class XbeeCommandLength(IntEnum):
-        Heartbeat = 0 #doesn't matter how big heartbeat is
-        EmergencyStop = 3
-        KeepIn = 3
-        KeepOut = 3
-        PatientLocation = 3
-        SearchArea = 3
-
-    XBEE_RX_DATA_LENGTH = len(data)
-
-    if not data or not isinstance(data, bytes) or XBEE_RX_DATA_LENGTH == 0:
-        return None
-
-    PAYLOAD_ID = data[0]
-    if PAYLOAD_ID != 0x01:  # 0x01 is the GCS TAG_COMMAND
-        return None
-
-    if XBEE_RX_DATA_LENGTH >= 2:
-        COMMAND_ID = data[1]
-        
-    # Heartbeat Command (ID: 1) — GCS keepalive
-    if COMMAND_ID == Command.Heartbeat and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.Heartbeat:
-        logger.info("Received HEARTBEAT command from GCS")
-        return {"command": "Heartbeat", "timestamp": time.time()}
-
-    # Emergency Stop Command (ID: 2, Format: BBB) — per gcs-infrastructure spec
-    if COMMAND_ID == Command.EmergencyStop and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.EmergencyStop:
-        status = data[2]
-        action = "ENABLE" if status == 0 else "DISABLE"
-        logger.info(f"Received EMERGENCY STOP command: {action}")
-
-        # Send MAV_CMD_DO_FLIGHTTERMINATION (ID: 185) if Enabled
-        if status == 0:
-            logger.info("Sending Flight Termination to MAVLink!")
-            try:
-                mav_connection.mav.command_long_send(
-                    mav_connection.target_system, mav_connection.target_component,
-                    mavutil.mavlink.MAV_CMD_DO_FLIGHTTERMINATION, 0,
-                    1.0, 0, 0, 0, 0, 0, 0
-                )
-            except Exception as e:
-                logger.error(f"Failed to send MAVLink command: {e}")
-
-        return {"command": "EmergencyStop", "action": action, "timestamp": time.time()}
-    
-    #KeepIn (not yet implemented)
-    if COMMAND_ID == Command.KeepIn and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.KeepIn:
-        return None
-
-    #KeepOut (not yet implemented)
-    if COMMAND_ID == Command.KeepOut and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.KeepOut:
-        return None
-    
-    #PaitentLocation (not yet implemented)
-    if COMMAND_ID == Command.PatientLocation and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.PatientLocation:
-        return None
-    
-    #Search Area (not yet implemented)
-    if COMMAND_ID == Command.SearchArea and XBEE_RX_DATA_LENGTH >= XbeeCommandLength.SearchArea:
-        return None
-
-    return None #return None if invalid IDs OR length of recieved data does not match any of the IDs (error check) 
-
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('MAV_GCS_Translator')
@@ -192,32 +90,35 @@ def main():
     logger.info(f'Starting MAVLink to GCS Translator...')
     
     # 1. Connect to MAVProxy
+    # MAVProxy runs as a systemd service on the Pi 5 and connects to the
+    # Pixhawk FC via UART (TELEM2). It fans out MAVLink messages to UDP
+    # ports, including :14550 which this script listens on.
     logger.info(f'Connecting to MAVLink stream on {MAVLINK_URI}')
     mav_connection = mavutil.mavlink_connection(MAVLINK_URI)
     mav_connection.wait_heartbeat()
     logger.info(f'Heartbeat from system (system {mav_connection.target_system} component {mav_connection.target_component})')
 
-    # 2. Connect to XBee radio (real hardware or MockXBee UDP fallback).
+    # 2. Connect to XBee radio.
     # Using InfrastructureInterface to spawn background VehicleXBee queues.
-    xb_mode = 'none'
-    xb = None
-    _cmd_queue: queue.Queue = queue.Queue()
-
+    # The XBee radio MUST be available — if it fails, exit immediately.
+    # There is no mock/fallback mode in production. (Per Aiden's feedback 4/28/26)
     try:
         # Define destination GCS laptop MAC address.
         from PacketLibrary.PacketLibrary import PacketLibrary
         PacketLibrary.SetGCSMACAddress("0013A2004298267E")
+        # The above is the MAC address of the GCS laptop's XBee radio module.
         
         LaunchVehicleXBee(get_xbee_port())
-        xb_mode = 'real'
         logger.info(f'VehicleXBee connected on {get_xbee_port()} via InfrastructureInterface.')
     except Exception as e:
-        logger.warning(f'Could not launch VehicleXBee: {e}')
-        logger.warning('Proceeding in TEST MODE (UDP MockXBee on port 14551).')
-        xb = MockXBee(port=14551)
-        xb_mode = 'mock'
+        logger.critical(f'FATAL: Could not launch VehicleXBee: {e}')
+        logger.critical('XBee radio is required for operation. Exiting.')
+        sys.exit(1)
 
     # 3. Main Translation Loop
+    # Aiden notes that it is preferable to have the constructor loaded with
+    # fields that GCS expects (4/27/26). TODO: refactor to construct with
+    # all values once per send cycle instead of incremental attribute assignment.
     telemetry = Telemetry()
     last_send_time = time.time()
     send_interval = 0.2  # 5 Hz
@@ -227,13 +128,23 @@ def main():
     logger.info('Starting telemetry translation loop (5 Hz Target)...')
 
     while True:
-        # Grab next MAVLink message
+        # ── STEP 1: Read MAVLink messages (non-blocking) ──────────────
+        # The Pixhawk sends each sensor category as a separate MAVLink
+        # message type. We read whatever is available and update the
+        # corresponding Telemetry fields. Messages arrive asynchronously
+        # at different rates (GPS ~5 Hz, attitude ~50 Hz, etc.).
         msg = mav_connection.recv_match(blocking=False)
         
         if msg:
             msg_type = msg.get_type()
 
-            # Map MAVLink data to GCS Telemetry struct
+            # Map MAVLink data to GCS Telemetry struct fields.
+            # Each handler performs the necessary unit conversions:
+            #   - GPS: 1e-7 degrees (int32) → degrees (float)
+            #   - Altitude: mm → feet
+            #   - Speed: m/s → ft/s
+            #   - Angles: radians → degrees
+            #   - Battery: millivolts → volts
             if msg_type == 'GLOBAL_POSITION_INT':
                 telemetry.CurrentPositionX = msg.lat / 1e7
                 telemetry.CurrentPositionY = msg.lon / 1e7
@@ -257,80 +168,114 @@ def main():
                 mav_state = getattr(msg, 'system_status', 0)
                 telemetry.VehicleStatus = 1 if mav_state == 4 else 0
             elif msg_type == 'DEBUG_VECT':
-                # Intercept upstream target coordinates from Kraken Server
+                # ──────────────────────────────────────────────────────────
+                # GCS REVIEWERS: This handler is MRA-INTERNAL ONLY.
+                # It does NOT use the XBee radio and has ZERO interaction
+                # with GCS infrastructure, the GCS Dashboard, or any GCS
+                # software. You can safely ignore this entire block.
+                #
+                # PURPOSE: MRA uses a KrakenSDR radio direction-finding
+                # system to geolocate a ground-based RF transmitter
+                # (the "survivor"). The Kraken Triangulator application
+                # runs on a SEPARATE MRA laptop (not the GCS laptop) and
+                # calculates estimated survivor coordinates.
+                #
+                # HOW IT WORKS (Dual-RF Architecture):
+                #   1. The MRA laptop connects to the Pixhawk flight
+                #      controller via an RFD-900x radio on Pixhawk TELEM1.
+                #      This is a completely separate radio link from the
+                #      XBee used for GCS telemetry.
+                #   2. The Kraken Triangulator app on the MRA laptop sends
+                #      the estimated survivor lat/lon upstream to the
+                #      Pixhawk as a MAVLink DEBUG_VECT message with the
+                #      name field set to 'KRAKEN_TGT'.
+                #   3. This script (running on the Pi 5) intercepts that
+                #      DEBUG_VECT message from the MAVLink stream and
+                #      stores the coordinates in the Telemetry struct
+                #      (MessageLat, MessageLon, MessageFlag=2).
+                #   4. The coordinates are then included in the next
+                #      XBee telemetry packet sent to GCS, so the GCS
+                #      Dashboard can display the estimated survivor
+                #      location if desired.
+                #
+                # RADIO LINK SUMMARY:
+                #   RFD-900x (TELEM1) → MRA-internal Kraken data (this handler)
+                #   XBee XR  (Pi 5 USB) → GCS telemetry (SendTelemetry above)
+                #   These two radios operate independently on different
+                #   frequencies and do not interfere with each other.
+                # ──────────────────────────────────────────────────────────
                 raw_name = getattr(msg, 'name', '')
                 msg_name = (raw_name.decode('utf-8', 'ignore') if isinstance(raw_name, bytes) else str(raw_name)).strip('\x00')
                 if msg_name == 'KRAKEN_TGT':
                     telemetry.MessageLat = float(msg.x)
                     telemetry.MessageLon = float(msg.y)
                     telemetry._last_target_mtime = time.time()
-                    logger.info(f"Intercepted Target from upstream MAVLink: {msg.x}, {msg.y}")
+                    logger.info(f"Kraken target received via RFD-900x: ({msg.x}, {msg.y})")
 
         current_time = time.time()
         
-        # Receive incoming commands from GCS.
-        # Real mode: poll CommandQueue from InfrastructureInterface
-        # Mock mode: poll the UDP MockXBee socket.
-        if xb_mode == 'real':
-            try:
-                if not CommandQueue.empty():
-                    # DecodeFormat.Class returns a typed Command object (Heartbeat,
-                    # EmergencyStop, AddZone, PatientLocation) per gcs-infrastructure API.
-                    cmd_obj = ReceiveCommand(DecodeFormat.Class)
-                    if cmd_obj:
-                        cmd_name = type(cmd_obj).__name__
-                        logger.info(f'Received GCS command: {cmd_name}')
-                        latest_command = {"command": cmd_name, "timestamp": time.time()}
-                        # Command dispatch: each case corresponds to a command type
-                        # defined in gcs-infrastructure/lib/gcs-packet/Packet/Command/.
-                        # DecodeFormat.Class gives us a typed object (not raw JSON),
-                        # matching the pattern shown in GCSTest.py / VehicleTest.py.
-                        #
-                        # TODO (Aiden / future integration): The cases below marked
-                        # 'not yet implemented' need MAVLink actions wired up once
-                        # the GCS team begins sending these during integration tests.
-                        match cmd_obj:
-                            case _ if cmd_name == 'EmergencyStop':
-                                # Status=0 means STOP, Status=1 means RESUME.
-                                # Sends MAV_CMD_DO_FLIGHTTERMINATION (ID 185) to FC.
-                                status = getattr(cmd_obj, 'Status', getattr(cmd_obj, 'status', 0))
-                                if status == 0:
-                                    logger.info('Sending MAV_CMD_DO_FLIGHTTERMINATION to flight controller!')
-                                    try:
-                                        mav_connection.mav.command_long_send(
-                                            mav_connection.target_system, mav_connection.target_component,
-                                            mavutil.mavlink.MAV_CMD_DO_FLIGHTTERMINATION, 0,
-                                            1.0, 0, 0, 0, 0, 0, 0
-                                        )
-                                    except Exception as mav_exc:
-                                        logger.error(f'Failed to send MAVLink command: {mav_exc}')
-                            case _ if cmd_name == 'Heartbeat':
-                                # GCS keepalive. No MAVLink action needed —
-                                # just acknowledge receipt so GCS knows we are alive.
-                                logger.info('Heartbeat received from GCS — connection confirmed.')
-                            case _ if cmd_name == 'AddZone':
-                                # TODO: Geofence upload. cmd_obj.ZoneType and
-                                # cmd_obj.Coordinates contain the zone data.
-                                # Wire up MAV_CMD_DO_FENCE_ENABLE or upload via
-                                # MISSION_ITEM_INT with MAV_MISSION_TYPE_FENCE.
-                                logger.info(f'AddZone received (not yet implemented): {cmd_obj}')
-                            case _ if cmd_name == 'PatientLocation':
-                                # TODO: GCS-pushed patient coordinate. cmd_obj.Coordinate
-                                # contains the (lat, lon) tuple. Forward to autopilot
-                                # or store for Kraken overlay.
-                                logger.info(f'PatientLocation received (not yet implemented): {cmd_obj}')
-                            case _:
-                                logger.warning(f'Unrecognised command type — no action taken: {cmd_name}')
-            except Exception as e:
-                logger.error(f"Command receive error: {e}")
-        elif xb_mode == 'mock' and xb:
-            frame = xb.retrieve_data()
-            if frame and hasattr(frame, 'received_data'):
-                cmd_event = process_xbee_command(frame.received_data, mav_connection, logger)
-                if cmd_event:
-                    latest_command = cmd_event
+        # ── STEP 2: Receive and dispatch GCS commands ─────────────────
+        # Process commands BEFORE sending telemetry so that command
+        # acknowledgments (e.g., MessageFlag updates) are reflected in the
+        # same loop iteration's telemetry packet. (Per Aiden's feedback 4/28/26)
+        try:
+            if not CommandQueue.empty():
+                # DecodeFormat.Class returns a typed Command object (Heartbeat,
+                # EmergencyStop, AddZone, PatientLocation) per gcs-infrastructure API.
+                cmd_obj = ReceiveCommand(DecodeFormat.Class)
+                if cmd_obj:
+                    cmd_name = type(cmd_obj).__name__
+                    logger.info(f'Received GCS command: {cmd_name}')
+                    latest_command = {"command": cmd_name, "timestamp": time.time()}
+                    # Command dispatch: each case corresponds to a command type
+                    # defined in gcs-infrastructure/lib/gcs-packet/Packet/Command/.
+                    # DecodeFormat.Class gives us a typed object (not raw JSON),
+                    # matching the pattern shown in GCSTest.py / VehicleTest.py.
+                    #
+                    # TODO (Aiden / future integration): The cases below marked
+                    # 'not yet implemented' need MAVLink actions wired up once
+                    # the GCS team begins sending these during integration tests.
+                    # We may need to get MRA Software to map the MAVLink commands to 
+                    # ensure that the system is compatible with the GCS team's commands. 4/28/2026
+                    match cmd_obj:
+                        case _ if cmd_name == 'EmergencyStop':
+                            # Status=0 means STOP, Status=1 means RESUME.
+                            # Sends MAV_CMD_DO_FLIGHTTERMINATION (ID 185) to FC.
+                            status = getattr(cmd_obj, 'Status', getattr(cmd_obj, 'status', 0))
+                            if status == 0:
+                                logger.info('Sending MAV_CMD_DO_FLIGHTTERMINATION to flight controller!')
+                                try:
+                                    mav_connection.mav.command_long_send(
+                                        mav_connection.target_system, mav_connection.target_component,
+                                        mavutil.mavlink.MAV_CMD_DO_FLIGHTTERMINATION, 0,
+                                        1.0, 0, 0, 0, 0, 0, 0
+                                    )
+                                except Exception as mav_exc:
+                                    logger.error(f'Failed to send MAVLink command: {mav_exc}')
+                        case _ if cmd_name == 'Heartbeat':
+                            # GCS keepalive. No MAVLink action needed —
+                            # just acknowledge receipt so GCS knows we are alive.
+                            logger.info('Heartbeat received from GCS — connection confirmed.')
+                        case _ if cmd_name == 'AddZone':
+                            # TODO: Geofence upload. cmd_obj.ZoneType and
+                            # cmd_obj.Coordinates contain the zone data.
+                            # Wire up MAV_CMD_DO_FENCE_ENABLE or upload via
+                            # MISSION_ITEM_INT with MAV_MISSION_TYPE_FENCE.
+                            logger.info(f'AddZone received (not yet implemented): {cmd_obj}')
+                        case _ if cmd_name == 'PatientLocation':
+                            # TODO: GCS-pushed patient coordinate. cmd_obj.Coordinate
+                            # contains the (lat, lon) tuple. Forward to autopilot
+                            # or store for Kraken overlay.
+                            logger.info(f'PatientLocation received (not yet implemented): {cmd_obj}')
+                        case _:
+                            logger.warning(f'Unrecognised command type — no action taken: {cmd_name}')
+        except Exception as e:
+            logger.error(f"Command receive error: {e}")
         
-        # Transmit at set frequency
+        # ── STEP 3: Transmit telemetry at 5 Hz ───────────────────────
+        # Telemetry is sent AFTER command processing so that any flag
+        # updates from commands (e.g., PatientLocation setting MessageFlag=2)
+        # are included in this cycle's packet.
         if current_time - last_send_time >= send_interval:
             telemetry.LastUpdated = int(current_time * 1000) # milliseconds
             
@@ -342,25 +287,20 @@ def main():
             telemetry.PatientStatus = 0
             
             # --- PATIENT LOCATION (MessageFlag=2) ---
-            # If we received a patient location via MAVLink (from Kraken Triangulator), flag it
+            # If we received a patient location via MAVLink (from Kraken Triangulator), flag it.
             if getattr(telemetry, '_last_target_mtime', 0) > 0:
+                # TODO: add a new command to reset the flag or a timeout mechanism
                 telemetry.MessageFlag = 2  # 2 = Patient per GCS Telemetry spec
             
-            # Encode and transmit telemetry over XBee (real or mock).
+            # Encode and transmit telemetry over XBee.
             try:
                 payload_bytes = telemetry.Encode()
                 hex_str = ' '.join(f'{b:02x}' for b in payload_bytes)
 
-                if xb_mode == 'real':
-                    SendTelemetry(telemetry)
-                    logger.info(f'XBee -> Tlm Packet Queued: [{len(payload_bytes)}B] {hex_str}')
-                elif xb_mode == 'mock' and xb:
-                    xb.transmit_data(payload_bytes, retrieveStatus=False)
-                    logger.info(f'MOCK -> Tlm Packet: [{len(payload_bytes)}B] {hex_str}')
-                else:
-                    logger.info(f'NO XBEE -> Tlm Packet: [{len(payload_bytes)}B] {hex_str}')
+                SendTelemetry(telemetry)
+                logger.info(f'XBee -> Tlm Packet Queued: [{len(payload_bytes)}B] {hex_str}')
                 
-                # Dump state for GUI
+                # Dump state for GUI (this is for UI/Dashboard reference only gui_server.py)
                 try:
                     state_dump = {
                         "lat": telemetry.CurrentPositionX,
