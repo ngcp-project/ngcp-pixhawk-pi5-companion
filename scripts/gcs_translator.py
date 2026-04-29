@@ -11,7 +11,6 @@ import logging
 import json
 import struct
 import os
-from pathlib import Path
 try:
     from pymavlink import mavutil
 except ImportError:
@@ -24,19 +23,14 @@ except ImportError:
 # gcs-infrastructure is owned and maintained by the GCS Subteam.
 # MRA is a READ-ONLY consumer. Do NOT commit to that repo directly.
 #
-# TODO (refactor): Migrate to the pip install -e setup documented in the
-# gcs-infrastructure README. The proper approach is:
-#   1. Move submodules under lib/ (gcs-infrastructure, gcs-packet, xbee-python)
-#   2. Run: pip install -e "lib/gcs-infrastructure"
-#          pip install -e "lib/gcs-packet"
-#          pip install -e "lib/xbee-python"
-#   3. Remove all sys.path.append calls below — imports will resolve via
-#      standard Python module resolution.
+# Module resolution uses pip install -e (editable installs) per the
+# gcs-infrastructure README. All three packages are registered under lib/:
+#   pip install -e "lib/gcs-infrastructure"   (pyproject: Application/)
+#   pip install -e "lib/gcs-packet"           (pyproject: Packet/)
+#   pip install -e "lib/xbee-python"          (pyproject: src/)
 #
-# The sys.path.append approach below is a TEMPORARY workaround that is
-# brittle and defeats the purpose of Python modules (per Aiden's feedback
-# 4/28/26). It is kept only until the pip install -e migration is completed
-# on both the development laptop and the Pi 5.
+# After running the above, imports resolve via standard Python module
+# resolution — no sys.path.append workarounds needed.
 #
 # IMPORTANT (module aliasing): Telemetry MUST be imported as
 #   'from Telemetry.Telemetry import Telemetry'
@@ -46,17 +40,7 @@ except ImportError:
 # silently return False (dropping all packets) if the class identity differs.
 # See: MRA Consumer Bug Log, Bug #001 for the full root cause analysis.
 #
-_GCS_BASE = Path(__file__).resolve().parent.parent / 'gcs-infrastructure'
-sys.path.append(str(_GCS_BASE))
-sys.path.append(str(_GCS_BASE / 'Application'))
-sys.path.append(str(_GCS_BASE / 'lib' / 'gcs-packet'))
-sys.path.append(str(_GCS_BASE / 'lib' / 'gcs-packet' / 'Packet'))
-sys.path.append(str(_GCS_BASE / 'lib' / 'xbee-python' / 'src'))
 try:
-    # Import Telemetry using the same path that VehicleXBee.py uses internally
-    # ('Telemetry.Telemetry', not 'Packet.Telemetry.Telemetry') so that
-    # isinstance(obj, Telemetry) inside RunTelemetryThread resolves to the
-    # same class object without needing to modify the GCS subteam's library.
     from Telemetry.Telemetry import Telemetry
     from Enum import DecodeFormat
     from Infrastructure.InfrastructureInterface import LaunchVehicleXBee, SendTelemetry, ReceiveCommand
@@ -64,8 +48,11 @@ try:
     print('[gcs_translator] GCS modules loaded (InfrastructureInterface API).')
 except ImportError as e:
     print(f'[gcs_translator] FATAL: Could not import GCS modules: {e}')
-    print('[gcs_translator] Ensure gcs-infrastructure submodule is initialised:')
+    print('[gcs_translator] Ensure submodules are initialised and installed:')
     print('[gcs_translator]   git submodule update --init --recursive')
+    print('[gcs_translator]   pip install -e "lib/gcs-infrastructure"')
+    print('[gcs_translator]   pip install -e "lib/gcs-packet"')
+    print('[gcs_translator]   pip install -e "lib/xbee-python"')
     sys.exit(1)
 
 # Configuration
