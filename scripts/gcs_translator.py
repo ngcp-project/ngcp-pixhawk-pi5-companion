@@ -197,7 +197,7 @@ def main():
                     telemetry.MessageLat = float(msg.x)
                     telemetry.MessageLon = float(msg.y)
                     telemetry._last_target_mtime = time.time()
-                    logger.info(f"Kraken target intercepted via XBee XR: ({msg.x}, {msg.y})")
+                    logger.info(f"Kraken target received via RFD-900x: ({msg.x}, {msg.y})")
 
         current_time = time.time()
         
