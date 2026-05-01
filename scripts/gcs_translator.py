@@ -209,7 +209,9 @@ def main():
             if not CommandQueue.empty():
                 # DecodeFormat.Class returns a typed Command object (Heartbeat,
                 # EmergencyStop, AddZone, PatientLocation) per gcs-infrastructure API.
-                cmd_obj = ReceiveCommand(DecodeFormat.Class)
+                # NOTE: Using named args defensively — GCS Development branch reorders
+                # the parameters to (Blocking, DecodeResult). Positional would break.
+                cmd_obj = ReceiveCommand(Blocking=False, DecodeResult=DecodeFormat.Class)
                 if cmd_obj:
                     cmd_name = type(cmd_obj).__name__
                     logger.info(f'Received GCS command: {cmd_name}')
