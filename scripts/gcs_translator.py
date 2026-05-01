@@ -248,6 +248,8 @@ def main():
                             # cmd_obj.Coordinates contain the zone data.
                             # Wire up MAV_CMD_DO_FENCE_ENABLE or upload via
                             # MISSION_ITEM_INT with MAV_MISSION_TYPE_FENCE.
+
+                            #Note: GCS implemented Addzone command, need to add MAVLink command to support this. 4/28/2026
                             logger.info(f'AddZone received (not yet implemented): {cmd_obj}')
                         case _ if cmd_name == 'PatientLocation':
                             # TODO: GCS-pushed patient coordinate. cmd_obj.Coordinate
