@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const fetchIntervalMs = 1000 / updateRateHz;
 
     let lastDataTime = 0;
+    let prevLastUpdated = 0;
 
     async function fetchTelemetry() {
         try {
@@ -20,11 +21,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
             updateUI(data);
 
-            // Check if data is stale (older than 2 seconds)
-            const currentTime = new Date().getTime();
-            if (currentTime - data.last_updated > 2000) {
+            // Staleness check: compare last_updated between consecutive polls.
+            // This avoids false positives from Pi 5 / laptop clock skew — we only
+            // mark stale if the translator has stopped updating the file entirely.
+            if (data.last_updated === prevLastUpdated) {
                 setStatus('stale');
             } else {
+                prevLastUpdated = data.last_updated;
                 setStatus('online');
             }
 
