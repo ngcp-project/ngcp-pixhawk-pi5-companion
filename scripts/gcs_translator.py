@@ -261,6 +261,11 @@ def main():
                                 if not Coordinates or len(Coordinates) < 3:
                                     raise ValueError('AddZone command requires at least 3 coordinates')
 
+                                logger.info(
+                                    f'AddZone zone type: {getattr(Zone, "name", Zone)}; '
+                                    f'{len(Coordinates)} coordinates received: {Coordinates}'
+                                )
+
                                 keep_in_cmd = getattr(mavutil.mavlink, 'MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION', 209)
                                 keep_out_cmd = getattr(mavutil.mavlink, 'MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION', 210)
                                 frame = getattr(mavutil.mavlink, 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT', 6)
