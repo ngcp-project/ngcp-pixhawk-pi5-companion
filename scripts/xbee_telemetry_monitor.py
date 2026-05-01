@@ -103,8 +103,44 @@ def print_telemetry(t, packet_count):
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def get_xbee_port():
-    """Get XBee COM port from first CLI arg, or default to COM5."""
-    return sys.argv[1] if len(sys.argv) > 1 else "COM5"
+    """Resolve the XBee COM port.
+
+    Priority order:
+      1. CLI argument  (e.g. python xbee_telemetry_monitor.py COM7)
+      2. Auto-detect   — scans serial ports for an FTDI device (VID 0x0403),
+                         which is the USB chip used by XBee modules.
+      3. Fallback      — COM5 with a warning if nothing is found.
+
+    Requires pyserial: pip install pyserial
+    """
+    # 1. Explicit CLI override
+    if len(sys.argv) > 1:
+        return sys.argv[1]
+
+    # 2. Auto-detect via pyserial
+    try:
+        import serial.tools.list_ports
+        FTDI_VID = 0x0403   # XBee USB adapter (FTDI chip)
+        candidates = [
+            p for p in serial.tools.list_ports.comports()
+            if p.vid == FTDI_VID
+        ]
+        if candidates:
+            port = candidates[0].device
+            desc = candidates[0].description
+            print(f"[*] Auto-detected XBee: {port}  ({desc})")
+            if len(candidates) > 1:
+                others = ", ".join(p.device for p in candidates[1:])
+                print(f"    (other FTDI ports found: {others} — pass one as CLI arg to override)")
+            return port
+        else:
+            print("[!] No FTDI device found — is the XBee plugged in?")
+    except ImportError:
+        print("[!] pyserial not installed (pip install pyserial) — falling back to COM5.")
+
+    # 3. Fallback
+    print("[!] Falling back to COM5. Pass the correct port as a CLI argument if this fails.")
+    return "COM5"
 
 
 def main():
