@@ -38,6 +38,15 @@ const MapView = (() => {
     let _resultCenterDot = null;
     let _customMarkers = [];
     let _customPolyline = null;
+
+    // Drop Zone Circles (100 ft / 150 ft around triangulation result)
+    let _dropZoneInner = null;   // 100 ft = 30.48 m
+    let _dropZoneOuter = null;   // 150 ft = 45.72 m
+    let _showDropZones = true;
+    const DROP_INNER_RADIUS_M = 30.48;   // 100 ft
+    const DROP_OUTER_RADIUS_M = 45.72;   // 150 ft
+    const DROP_INNER_COLOR = '#00e87a';  // Green
+    const DROP_OUTER_COLOR = '#ffb84d';  // Amber
     
     // Masking variables
     let _maskLayer = null;
@@ -900,6 +909,35 @@ const MapView = (() => {
                 _resultCenterDot.setLatLng([result.lat, result.lon]);
             }
 
+            // ── Drop Zone Concentric Circles (100 ft / 150 ft) ────────
+            if (_showDropZones) {
+                if (!_dropZoneInner) {
+                    _dropZoneInner = L.circle([result.lat, result.lon], {
+                        radius: DROP_INNER_RADIUS_M,
+                        color: DROP_INNER_COLOR,
+                        weight: 2.5,
+                        fillColor: DROP_INNER_COLOR,
+                        fillOpacity: 0.08,
+                        dashArray: null,
+                    }).addTo(_resultLayer);
+                    _dropZoneOuter = L.circle([result.lat, result.lon], {
+                        radius: DROP_OUTER_RADIUS_M,
+                        color: DROP_OUTER_COLOR,
+                        weight: 2,
+                        fillColor: DROP_OUTER_COLOR,
+                        fillOpacity: 0.04,
+                        dashArray: '6 4',
+                    }).addTo(_resultLayer);
+                } else {
+                    _dropZoneInner.setLatLng([result.lat, result.lon]);
+                    _dropZoneOuter.setLatLng([result.lat, result.lon]);
+                }
+            } else {
+                // Remove if toggled off while result exists
+                if (_dropZoneInner) { _dropZoneInner.remove(); _dropZoneInner = null; }
+                if (_dropZoneOuter) { _dropZoneOuter.remove(); _dropZoneOuter = null; }
+            }
+
             const isImp = document.getElementById('setting-units')?.value === 'imperial';
             let radiusStr = '';
             if (isImp) {
@@ -929,6 +967,8 @@ const MapView = (() => {
                 _resultLayer.clearLayers();
                 _resultCrosshair = null;
                 _resultCenterDot = null;
+                _dropZoneInner = null;
+                _dropZoneOuter = null;
             }
         }
 
@@ -941,6 +981,8 @@ const MapView = (() => {
 
     function setLineLength(km) { _lineLengthKm = km; }
     function setShowUncertainty(val) { _showUncertainty = val; }
+    function setShowDropZones(val) { _showDropZones = val; }
+    function getDropZoneRadii() { return { innerM: DROP_INNER_RADIUS_M, outerM: DROP_OUTER_RADIUS_M }; }
     function invalidateSize() { if (_map) _map.invalidateSize(); }
 
     function addHeatPoint(lat, lon, intensity = 1.0) {
@@ -1060,7 +1102,7 @@ const MapView = (() => {
     }
 
     return { 
-        init, update, setTile, setLineLength, setShowUncertainty, invalidateSize,
+        init, update, setTile, setLineLength, setShowUncertainty, setShowDropZones, getDropZoneRadii, invalidateSize,
         addHeatPoint, clearHeat, setHeatGrid, setHeatRadius, setHeatBlur, setHeatOpacity, getHeatPointCount,
         getMaskGeoJSON, refreshCustomMarkers: _refreshCustomMarkers,
         addGroundTruth, removeGroundTruth, clearGroundTruth, getGroundTruthMarkers,

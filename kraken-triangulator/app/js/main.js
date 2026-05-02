@@ -382,6 +382,13 @@
         DataFeed.setPollInterval(parseInt(elPollInterval.value, 10) || 2000));
     elTile?.addEventListener('change', () => MapView.setTile(elTile.value));
     elUncertainty?.addEventListener('change', () => MapView.setShowUncertainty(elUncertainty.checked));
+
+    // Drop Zone toggle — show/hide concentric circles on map
+    const elDropZones = document.getElementById('setting-drop-zones');
+    elDropZones?.addEventListener('change', () => {
+        MapView.setShowDropZones(elDropZones.checked);
+        if (_lastData) _processData(_lastData);
+    });
     elLineLength?.addEventListener('change', () => {
         const isImp = document.getElementById('setting-units')?.value === 'imperial';
         let len = parseFloat(elLineLength.value) || 2;
@@ -727,8 +734,34 @@
             }
             
             set('res-stations', `${result.stationsUsed} / ${displayHistory.length}`);
+
+            // Drop Zone indicator rows
+            const dzToggle = document.getElementById('setting-drop-zones');
+            const dzInnerRow = document.getElementById('drop-zone-inner-row');
+            const dzOuterRow = document.getElementById('drop-zone-outer-row');
+            if (dzToggle?.checked) {
+                const radii = MapView.getDropZoneRadii();
+                if (dzInnerRow) {
+                    dzInnerRow.style.display = 'flex';
+                    const innerEl = document.getElementById('drop-inner-dist');
+                    if (innerEl) innerEl.textContent = `${radii.innerM.toFixed(1)} m (100 ft)`;
+                }
+                if (dzOuterRow) {
+                    dzOuterRow.style.display = 'flex';
+                    const outerEl = document.getElementById('drop-outer-dist');
+                    if (outerEl) outerEl.textContent = `${radii.outerM.toFixed(1)} m (150 ft)`;
+                }
+            } else {
+                if (dzInnerRow) dzInnerRow.style.display = 'none';
+                if (dzOuterRow) dzOuterRow.style.display = 'none';
+            }
         } else {
             ['res-lat','res-lon','res-error','res-stations'].forEach(id => set(id, '—'));
+            // Hide drop zone rows when no result
+            const dzInnerRow2 = document.getElementById('drop-zone-inner-row');
+            const dzOuterRow2 = document.getElementById('drop-zone-outer-row');
+            if (dzInnerRow2) dzInnerRow2.style.display = 'none';
+            if (dzOuterRow2) dzOuterRow2.style.display = 'none';
         }
 
         const freqMHz = data?.frequency_hz ? (data.frequency_hz / 1e6).toFixed(4) + ' MHz' : '—';

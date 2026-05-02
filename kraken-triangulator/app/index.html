@@ -118,6 +118,24 @@
                                 <span class="result-label" style="color:var(--accent-green);">Δ REF. DISTANCE</span>
                                 <span class="result-value mono" id="res-ref-dist" style="color:var(--accent-cyan);">—</span>
                             </div>
+                            <!-- Drop Zone Radii (Chad Feature Request) -->
+                            <div style="border-top:1px solid var(--border); padding-top:10px; margin-top:8px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                    <span class="result-label" style="font-weight:700; letter-spacing:0.04em;">DROP ZONES</span>
+                                    <label style="display:flex; align-items:center; gap:6px; font-size:0.68rem; color:var(--text-muted); cursor:pointer;">
+                                        <input type="checkbox" id="setting-drop-zones" style="width:13px; height:13px;" checked>
+                                        Show
+                                    </label>
+                                </div>
+                                <div class="result-item" id="drop-zone-inner-row" style="display:none;">
+                                    <span class="result-label" style="color:#00e87a;">⬤ INNER (100 ft)</span>
+                                    <span class="result-value mono" id="drop-inner-dist" style="color:#00e87a;">—</span>
+                                </div>
+                                <div class="result-item" id="drop-zone-outer-row" style="display:none;">
+                                    <span class="result-label" style="color:#ffb84d;">◯ OUTER (150 ft)</span>
+                                    <span class="result-value mono" id="drop-outer-dist" style="color:#ffb84d;">—</span>
+                                </div>
+                            </div>
                         </div>
                         <div class="sidebar-card" id="plot-coord-card">
                             <h3>Plot Coordinate</h3>
