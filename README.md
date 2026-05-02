@@ -1,12 +1,30 @@
 # NGCP MRA — Pixhawk / Pi 5 Companion Computer
 
-> **Version:** v1.9.4 &nbsp;|&nbsp; **Branch:** `main`
+> **Version:** v2.3.0-chad-features &nbsp;|&nbsp; **Branch:** `ChadFeatureRequest`
 
 This repository contains the **flight-side telemetry pipeline** for the NGCP Multi-Rotor Aircraft (MRA). It bridges MAVLink telemetry from the Cube Orange flight controller, through a Raspberry Pi 5 companion computer, over an **XBee XR 900 MHz** radio link, to the Ground Control Station (GCS).
 
 MRA is a **read-only consumer** of the `gcs-infrastructure` library (owned by the GCS Subteam). This repo does not modify that library; it consumes its public API (`InfrastructureInterface`) to transmit telemetry and receive commands.
 
 > Scripts and workflow are tailored for CPP NGCP MRA. MEA teams may use this repo as a reference template but should adapt it for their own hardware configuration.
+
+---
+
+## ⚠️ Branch Notes — `ChadFeatureRequest`
+
+This branch contains **in-progress features** targeting the next integration cycle. Changes are isolated here before merging into `RFD-Fallback`.
+
+### Current Changes (v2.3.0)
+- **Drop Zone Concentric Circles**: 100ft/150ft radius indicators on the triangulation result marker (GPS tab)
+- **Estimation Tab — Two-Phase Loiter**: Phase 1 (Coarse) and Phase 2 (Final) result containers with independent transmit/delete controls
+- **ERU Patient Location Display**: New sidebar card in GPS tab + Pi 5 web GUI for ERU team coordinates received via GCS Station
+- **`gcs_translator.py` — PatientLocation Handler**: Fully implemented command handler that stores ERU coordinates and forwards them to MRA Laptop via `DEBUG_VECT('ERU_TGT')`
+- **`kraken_server.py` — ERU Endpoint**: `GET /api/eru_patient` endpoint + `ERU_TGT` MAVLink drain interception
+
+### Pending / Future Work
+- **GCS Desktop App Dependency**: The GCS team has not yet implemented `send_patient_location` in their CommandsApi — ERU relay cannot be tested until this is added
+- **MRA Software Coordination**: Display-only ERU integration for now; autonomy engine integration TBD
+- **Hardware Testing**: Pi 5 and RFD-900x are in storage; all changes require validation at next integration cycle
 
 ---
 

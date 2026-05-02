@@ -252,10 +252,30 @@ def main():
                             # MISSION_ITEM_INT with MAV_MISSION_TYPE_FENCE.
                             logger.info(f'AddZone received (not yet implemented): {cmd_obj}')
                         case _ if cmd_name == 'PatientLocation':
-                            # TODO: GCS-pushed patient coordinate. cmd_obj.Coordinate
-                            # contains the (lat, lon) tuple. Forward to autopilot
-                            # or store for Kraken overlay.
-                            logger.info(f'PatientLocation received (not yet implemented): {cmd_obj}')
+                            # ── ERU Patient Coordinate Relay ──────────────────
+                            # GCS Station forwards ERU team's survivor location
+                            # via XBee. cmd_obj.Coordinates is a (lat, lon) tuple.
+                            # Store for:
+                            #   1. Pi 5 web GUI display (telemetry.json)
+                            #   2. MAVLink relay to MRA Laptop (DEBUG_VECT ERU_TGT)
+                            eru_lat, eru_lon = cmd_obj.Coordinates
+                            telemetry._eru_lat = float(eru_lat)
+                            telemetry._eru_lon = float(eru_lon)
+                            telemetry._eru_received_at = time.time()
+                            logger.info(f'PatientLocation received from GCS/ERU: ({eru_lat}, {eru_lon})')
+
+                            # Forward ERU coordinates to MRA Laptop via RFD-900x.
+                            # Uses DEBUG_VECT('ERU_TGT') — same mechanism as KRAKEN_TGT
+                            # but with a distinct name so the Kraken App can differentiate.
+                            try:
+                                mav_connection.mav.debug_vect_send(
+                                    b'ERU_TGT',
+                                    int(time.time() * 1e6),
+                                    float(eru_lat), float(eru_lon), 0.0
+                                )
+                                logger.info(f'ERU_TGT forwarded via MAVLink/RFD-900x: ({eru_lat}, {eru_lon})')
+                            except Exception as mav_exc:
+                                logger.error(f'Failed to forward ERU_TGT via MAVLink: {mav_exc}')
                         case _:
                             logger.warning(f'Unrecognised command type — no action taken: {cmd_name}')
         except Exception as e:
@@ -305,7 +325,10 @@ def main():
                         "latest_command": latest_command,
                         "message_flag": telemetry.MessageFlag,
                         "target_lat": getattr(telemetry, 'MessageLat', 0.0),
-                        "target_lon": getattr(telemetry, 'MessageLon', 0.0)
+                        "target_lon": getattr(telemetry, 'MessageLon', 0.0),
+                        "eru_lat": getattr(telemetry, '_eru_lat', 0.0),
+                        "eru_lon": getattr(telemetry, '_eru_lon', 0.0),
+                        "eru_received_at": getattr(telemetry, '_eru_received_at', 0)
                     }
                     with open('/tmp/telemetry.json', 'w') as f:
                         json.dump(state_dump, f)

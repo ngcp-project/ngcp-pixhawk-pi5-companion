@@ -94,6 +94,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 panel.classList.add('flash-red');
             }
         }
+
+        // ── ERU Patient Location (from GCS/XBee) ─────────────────────────
+        if (data.eru_lat && data.eru_lon && data.eru_received_at > 0) {
+            document.getElementById('val-eru-lat').textContent = data.eru_lat.toFixed(6);
+            document.getElementById('val-eru-lon').textContent = data.eru_lon.toFixed(6);
+            const eruDate = new Date(data.eru_received_at * 1000);
+            document.getElementById('val-eru-time').textContent = eruDate.toLocaleTimeString() + '.' + eruDate.getMilliseconds().toString().padStart(3, '0');
+        } else {
+            document.getElementById('val-eru-lat').textContent = '--';
+            document.getElementById('val-eru-lon').textContent = '--';
+            document.getElementById('val-eru-time').textContent = '--';
+        }
     }
 
     // ── Port Monitor ─────────────────────────────────────────────────────────

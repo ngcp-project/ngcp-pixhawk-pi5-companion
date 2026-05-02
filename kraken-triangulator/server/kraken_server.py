@@ -77,6 +77,12 @@ MAVLINK_UPSTREAM_PORT = int(os.environ.get("MAVLINK_UPSTREAM_PORT", 14551))
 _mav_upstream = None        # Set at startup
 _mav_upstream_ready = False # True once we've received at least one packet
 
+# ── ERU Patient Location State ────────────────────────────────────────────────
+# Populated when a DEBUG_VECT('ERU_TGT') message arrives via MAVLink from Pi 5.
+# The Pi 5 forwards ERU coordinates originally received from GCS Station/XBee.
+_eru_lock = threading.Lock()
+_eru_patient = {"lat": 0.0, "lon": 0.0, "received_at": 0}
+
 def _load_mock():
     global _mock_data, _waypoints, _obs_index, _last_advance_t, _obs_timestamps
     with open(MOCK_DATA_PATH, encoding='utf-8') as f:
@@ -114,7 +120,7 @@ def _advance_waypoint():
         _last_advance_t = now
 
 def _build_response():
-    if _live_history:
+    if _live_mode and _live_history:
         return {
             "source":              "udp_stream",
             "frequency_hz":        462637500,
@@ -458,6 +464,14 @@ def transmit():
         logger.error(f"Failed to export target: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/eru_patient", methods=["GET"])
+def get_eru_patient():
+    """Returns the latest ERU patient coordinates received via MAVLink.
+    Populated from DEBUG_VECT('ERU_TGT') messages originating from the
+    Pi 5 (which receives them from GCS Station via XBee PatientLocation command)."""
+    with _eru_lock:
+        return jsonify(_eru_patient)
+
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
 def _translate_fusion_record(payload):
@@ -514,17 +528,34 @@ def udp_listener_thread():
 def _mavlink_drain_thread():
     """Background thread: drain incoming MAVLink packets to keep the connection alive.
     Once the first packet arrives from MAVProxy, the return address is learned
-    and _mav_upstream_ready is set to True."""
-    global _mav_upstream_ready
+    and _mav_upstream_ready is set to True.
+    Also intercepts ERU_TGT DEBUG_VECT messages for ERU patient coordinates."""
+    global _mav_upstream_ready, _eru_patient
     while True:
         try:
             if _mav_upstream is None:
                 time.sleep(1)
                 continue
             msg = _mav_upstream.recv_match(blocking=True, timeout=5)
-            if msg and not _mav_upstream_ready:
-                _mav_upstream_ready = True
-                logger.info(f"MAVLink upstream link ESTABLISHED — bidirectional path to MAVProxy confirmed.")
+            if msg:
+                if not _mav_upstream_ready:
+                    _mav_upstream_ready = True
+                    logger.info(f"MAVLink upstream link ESTABLISHED — bidirectional path to MAVProxy confirmed.")
+
+                # ── ERU_TGT interception ──────────────────────────────────
+                # Pi 5 gcs_translator.py forwards ERU coordinates from GCS
+                # Station via DEBUG_VECT('ERU_TGT'). Store for the frontend.
+                if msg.get_type() == 'DEBUG_VECT':
+                    raw_name = getattr(msg, 'name', '')
+                    vect_name = (raw_name.decode('utf-8', 'ignore') if isinstance(raw_name, bytes) else str(raw_name)).strip('\x00')
+                    if vect_name == 'ERU_TGT':
+                        with _eru_lock:
+                            _eru_patient = {
+                                "lat": float(msg.x),
+                                "lon": float(msg.y),
+                                "received_at": time.time()
+                            }
+                        logger.info(f"ERU patient coordinates received via MAVLink: ({msg.x}, {msg.y})")
         except Exception as e:
             logger.error(f"MAVLink drain error: {e}")
             time.sleep(1)

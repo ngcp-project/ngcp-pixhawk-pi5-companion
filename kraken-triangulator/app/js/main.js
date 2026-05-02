@@ -24,6 +24,12 @@
     let _estimationHits = [];
     let _estIdCounter = 0;
 
+    // ── Two-Phase Loiter State ────────────────────────────────────
+    // Phase 1 = Coarse (initial wide loiter), Phase 2 = Final (tighter loiter)
+    let _activePhase = 1;  // 1 or 2 — determines where new hits are stored
+    let _phase1Result = null;  // { lat, lon, spreadM, count } or null
+    let _phase2Result = null;  // { lat, lon, spreadM, count } or null
+
     function initEstimationMap() {
         if (_estimationMap) {
             _estimationMap.invalidateSize();
@@ -105,8 +111,29 @@
 
         const convergenceEnabled = document.getElementById('setting-convergence')?.checked ?? true;
 
-        // ── Update Converged Estimate Card ──
-        _updateConvergedCard(convergenceEnabled);
+        // ── Update Phase Cards ──
+        // Auto-compute convergence and store into the active phase
+        if (convergenceEnabled && _estimationHits.length >= 2) {
+            const conv = _computeConvergence();
+            if (conv) {
+                if (_activePhase === 1) {
+                    _phase1Result = conv;
+                } else {
+                    _phase2Result = conv;
+                }
+            }
+        } else if (convergenceEnabled && _estimationHits.length === 1) {
+            // Single hit — store as-is into the active phase
+            const hit = _estimationHits[0];
+            const singleResult = { lat: hit.lat, lon: hit.lon, spreadM: 0, count: 1 };
+            if (_activePhase === 1) {
+                _phase1Result = singleResult;
+            } else {
+                _phase2Result = singleResult;
+            }
+        }
+        _updatePhaseCard(1, _phase1Result);
+        _updatePhaseCard(2, _phase2Result);
 
         // ── Render Hit Log ──
         histContainer.innerHTML = '';
@@ -178,53 +205,47 @@
         });
     }
 
-    function _updateConvergedCard(enabled) {
-        const card = document.getElementById('converged-estimate-card');
-        const badge = document.getElementById('converged-status-badge');
-        const btnTransmit = document.getElementById('btn-conv-transmit');
+    function _updatePhaseCard(phaseNum, result) {
+        const prefix = phaseNum === 1 ? 'phase1' : 'phase2';
+        const card = document.getElementById(`${prefix}-estimate-card`);
+        const badge = document.getElementById(`${prefix}-status-badge`);
+        const btnTransmit = document.getElementById(`btn-${prefix}-transmit`);
+        const btnDelete = document.getElementById(`btn-${prefix}-delete`);
         if (!card) return;
 
-        if (!enabled) {
+        if (!result) {
             card.className = 'converged-card converged-disabled';
-            if (badge) badge.textContent = 'OFF';
+            if (badge) badge.textContent = 'EMPTY';
+            document.getElementById(`${prefix}-lat`).textContent = '—';
+            document.getElementById(`${prefix}-lon`).textContent = '—';
+            document.getElementById(`${prefix}-count`).textContent = '— hits';
+            document.getElementById(`${prefix}-spread`).textContent = '—';
             if (btnTransmit) btnTransmit.disabled = true;
-            return;
-        }
-
-        const conv = _computeConvergence();
-
-        if (!conv) {
-            card.className = 'converged-card converged-active';
-            if (badge) badge.textContent = _estimationHits.length === 0 ? 'WAITING' : '1 HIT';
-            document.getElementById('conv-lat').textContent = _estimationHits.length === 1 ? _estimationHits[0].lat.toFixed(6) + '°' : '—';
-            document.getElementById('conv-lon').textContent = _estimationHits.length === 1 ? _estimationHits[0].lon.toFixed(6) + '°' : '—';
-            document.getElementById('conv-count').textContent = `${_estimationHits.length} hits`;
-            document.getElementById('conv-spread').textContent = '—';
-            if (btnTransmit) btnTransmit.disabled = _estimationHits.length < 1;
+            if (btnDelete) btnDelete.disabled = true;
             return;
         }
 
         card.className = 'converged-card converged-active';
-        if (badge) badge.textContent = 'LIVE';
+        if (badge) badge.textContent = 'LOCKED';
 
-        document.getElementById('conv-lat').textContent = conv.lat.toFixed(6) + '°';
-        document.getElementById('conv-lon').textContent = conv.lon.toFixed(6) + '°';
-        document.getElementById('conv-count').textContent = `${conv.count} hits`;
+        document.getElementById(`${prefix}-lat`).textContent = result.lat.toFixed(6) + '°';
+        document.getElementById(`${prefix}-lon`).textContent = result.lon.toFixed(6) + '°';
+        document.getElementById(`${prefix}-count`).textContent = `${result.count} hits`;
 
-        // Display spread in appropriate units
         const isImperial = document.getElementById('setting-units')?.value === 'imperial';
         if (isImperial) {
-            const spreadFt = conv.spreadM * 3.28084;
-            document.getElementById('conv-spread').textContent = spreadFt >= 5280
+            const spreadFt = result.spreadM * 3.28084;
+            document.getElementById(`${prefix}-spread`).textContent = spreadFt >= 5280
                 ? `± ${(spreadFt / 5280).toFixed(2)} mi`
                 : `± ${spreadFt.toFixed(1)} ft`;
         } else {
-            document.getElementById('conv-spread').textContent = conv.spreadM >= 1000
-                ? `± ${(conv.spreadM / 1000).toFixed(2)} km`
-                : `± ${conv.spreadM.toFixed(1)} m`;
+            document.getElementById(`${prefix}-spread`).textContent = result.spreadM >= 1000
+                ? `± ${(result.spreadM / 1000).toFixed(2)} km`
+                : `± ${result.spreadM.toFixed(1)} m`;
         }
 
         if (btnTransmit) btnTransmit.disabled = false;
+        if (btnDelete) btnDelete.disabled = false;
     }
 
     function _redrawEstimationMarkers() {
@@ -303,36 +324,105 @@
         }
     }
 
-    // Set up clear button and converged transmit
+    // Set up clear button and phase transmit/delete/select controls
     document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('btn-est-clear-all')?.addEventListener('click', () => {
-            if (confirm("Clear all estimation history?")) {
+            if (confirm("Clear all estimation history? This resets both Phase 1 and Phase 2.")) {
                 _estimationHits = [];
+                _phase1Result = null;
+                _phase2Result = null;
                 _redrawEstimationMarkers();
                 _renderEstimationLog();
+                _updatePhaseCard(1, null);
+                _updatePhaseCard(2, null);
             }
         });
 
-        // Converged Estimate transmit button
-        document.getElementById('btn-conv-transmit')?.addEventListener('click', () => {
-            const convergenceEnabled = document.getElementById('setting-convergence')?.checked ?? true;
-            if (!convergenceEnabled) return;
+        // ── Phase Selection Buttons ──────────────────────────────────
+        const btnPhase1 = document.getElementById('btn-phase-1-select');
+        const btnPhase2 = document.getElementById('btn-phase-2-select');
 
-            const conv = _computeConvergence();
-            if (conv) {
-                console.log(`[Telemetry] TRANSMITTING CONVERGED: ${conv.lat}, ${conv.lon} (±${conv.spreadM.toFixed(1)}m, ${conv.count} hits)`);
-                _transmitToGCS(conv.lat, conv.lon, conv.spreadM, conv.count)
-                    .then(() => alert(`Transmitted CONVERGED coordinates to GCS:\nLat: ${conv.lat.toFixed(6)}\nLon: ${conv.lon.toFixed(6)}\nSpread: ±${conv.spreadM.toFixed(1)}m\nBased on: ${conv.count} hits`))
-                    .catch(e => alert(`Transmission failed: ${e}`));
-            } else if (_estimationHits.length === 1) {
-                // Single hit — transmit directly
-                const hit = _estimationHits[0];
-                console.log(`[Telemetry] TRANSMITTING SINGLE: ${hit.lat}, ${hit.lon}`);
-                _transmitToGCS(hit.lat, hit.lon, 0, 1)
-                    .then(() => alert(`Transmitted coordinates to GCS:\nLat: ${hit.lat.toFixed(6)}\nLon: ${hit.lon.toFixed(6)}`))
+        function _setActivePhase(phase) {
+            _activePhase = phase;
+            if (btnPhase1 && btnPhase2) {
+                if (phase === 1) {
+                    btnPhase1.style.background = 'var(--accent-orange)';
+                    btnPhase1.style.color = '#000';
+                    btnPhase1.style.fontWeight = '700';
+                    btnPhase2.style.background = '';
+                    btnPhase2.style.color = '';
+                    btnPhase2.style.fontWeight = '';
+                } else {
+                    btnPhase2.style.background = 'var(--accent-green)';
+                    btnPhase2.style.color = '#000';
+                    btnPhase2.style.fontWeight = '700';
+                    btnPhase1.style.background = '';
+                    btnPhase1.style.color = '';
+                    btnPhase1.style.fontWeight = '';
+                }
+            }
+            console.log(`[Estimation] Active phase set to Phase ${phase}`);
+        }
+
+        btnPhase1?.addEventListener('click', () => _setActivePhase(1));
+        btnPhase2?.addEventListener('click', () => _setActivePhase(2));
+
+        // ── Phase 1 Transmit / Delete ────────────────────────────────
+        document.getElementById('btn-phase1-transmit')?.addEventListener('click', () => {
+            if (_phase1Result) {
+                console.log(`[Telemetry] TRANSMITTING Phase 1: ${_phase1Result.lat}, ${_phase1Result.lon}`);
+                _transmitToGCS(_phase1Result.lat, _phase1Result.lon, _phase1Result.spreadM, _phase1Result.count)
+                    .then(() => alert(`Phase 1 (Coarse) transmitted:\nLat: ${_phase1Result.lat.toFixed(6)}\nLon: ${_phase1Result.lon.toFixed(6)}\nSpread: ±${_phase1Result.spreadM.toFixed(1)}m`))
                     .catch(e => alert(`Transmission failed: ${e}`));
             }
         });
+
+        document.getElementById('btn-phase1-delete')?.addEventListener('click', () => {
+            if (confirm('Delete Phase 1 (Coarse) result? This cannot be undone.')) {
+                _phase1Result = null;
+                _updatePhaseCard(1, null);
+                console.log('[Estimation] Phase 1 result deleted.');
+            }
+        });
+
+        // ── Phase 2 Transmit / Delete ────────────────────────────────
+        document.getElementById('btn-phase2-transmit')?.addEventListener('click', () => {
+            if (_phase2Result) {
+                console.log(`[Telemetry] TRANSMITTING Phase 2: ${_phase2Result.lat}, ${_phase2Result.lon}`);
+                _transmitToGCS(_phase2Result.lat, _phase2Result.lon, _phase2Result.spreadM, _phase2Result.count)
+                    .then(() => alert(`Phase 2 (Final) transmitted:\nLat: ${_phase2Result.lat.toFixed(6)}\nLon: ${_phase2Result.lon.toFixed(6)}\nSpread: ±${_phase2Result.spreadM.toFixed(1)}m`))
+                    .catch(e => alert(`Transmission failed: ${e}`));
+            }
+        });
+
+        document.getElementById('btn-phase2-delete')?.addEventListener('click', () => {
+            if (confirm('Delete Phase 2 (Final) result? This cannot be undone.')) {
+                _phase2Result = null;
+                _updatePhaseCard(2, null);
+                console.log('[Estimation] Phase 2 result deleted.');
+            }
+        });
+
+        // ── ERU Patient Location Polling ─────────────────────────────
+        // Polls /api/eru_patient every 3 seconds for ERU coordinates
+        // received from GCS Station via Pi 5 MAVLink relay.
+        setInterval(async () => {
+            try {
+                const res = await fetch(window.location.origin + '/api/eru_patient');
+                if (!res.ok) return;
+                const data = await res.json();
+                const eruCard = document.getElementById('eru-patient-card');
+                if (data.received_at > 0 && data.lat !== 0 && data.lon !== 0) {
+                    if (eruCard) eruCard.style.display = '';
+                    document.getElementById('eru-lat').textContent = data.lat.toFixed(6) + '°';
+                    document.getElementById('eru-lon').textContent = data.lon.toFixed(6) + '°';
+                    const eruDate = new Date(data.received_at * 1000);
+                    document.getElementById('eru-time').textContent = eruDate.toLocaleTimeString();
+                }
+            } catch (e) {
+                // Silently ignore — ERU data is optional
+            }
+        }, 3000);
     });
 
     tabButtons.forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));

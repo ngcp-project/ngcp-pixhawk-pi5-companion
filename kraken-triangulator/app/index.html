@@ -137,6 +137,23 @@
                                 </div>
                             </div>
                         </div>
+                        <!-- ERU Patient Location (display-only, from GCS via Pi 5) -->
+                        <div class="sidebar-card" id="eru-patient-card" style="display:none;">
+                            <h3 style="color:var(--accent-orange);">ERU Patient Location</h3>
+                            <p style="font-size:0.65rem; color:var(--text-muted); margin-bottom:8px;">Coordinates received from ERU team via GCS Station</p>
+                            <div class="result-item">
+                                <span class="result-label" style="color:var(--accent-orange);">ERU LATITUDE</span>
+                                <span class="result-value mono" id="eru-lat">—</span>
+                            </div>
+                            <div class="result-item">
+                                <span class="result-label" style="color:var(--accent-orange);">ERU LONGITUDE</span>
+                                <span class="result-value mono" id="eru-lon">—</span>
+                            </div>
+                            <div class="result-item">
+                                <span class="result-label">RECEIVED AT</span>
+                                <span class="result-value mono" id="eru-time">—</span>
+                            </div>
+                        </div>
                         <div class="sidebar-card" id="plot-coord-card">
                             <h3>Plot Coordinate</h3>
                             <p style="font-size:0.68rem; color:var(--text-muted); margin-bottom:10px;">
@@ -325,32 +342,78 @@
                     
                     <div style="flex:1; overflow-y:auto; padding:0.5rem; display:flex; flex-direction:column; gap:12px;">
                         
-                        <!-- Converged Estimate Card -->
-                        <div id="converged-estimate-card" class="converged-card converged-disabled">
+                        <!-- Phase 1: Coarse Estimate Card -->
+                        <div id="phase1-estimate-card" class="converged-card converged-disabled">
                             <div class="converged-header">
-                                <span class="converged-star">★</span>
-                                <span class="converged-title">CONVERGED ESTIMATE</span>
-                                <span class="converged-badge" id="converged-status-badge">OFF</span>
+                                <span class="converged-star" style="color:#ffa726;">①</span>
+                                <span class="converged-title">PHASE 1 — COARSE ESTIMATE</span>
+                                <span class="converged-badge" id="phase1-status-badge">EMPTY</span>
                             </div>
-                            <div class="converged-body" id="converged-body">
+                            <div class="converged-body" id="phase1-body">
                                 <div class="converged-row">
                                     <span class="converged-label">Latitude</span>
-                                    <span class="converged-value mono" id="conv-lat">—</span>
+                                    <span class="converged-value mono" id="phase1-lat">—</span>
                                 </div>
                                 <div class="converged-row">
                                     <span class="converged-label">Longitude</span>
-                                    <span class="converged-value mono" id="conv-lon">—</span>
+                                    <span class="converged-value mono" id="phase1-lon">—</span>
                                 </div>
                                 <div class="converged-row">
                                     <span class="converged-label">Based On</span>
-                                    <span class="converged-value mono" id="conv-count">— hits</span>
+                                    <span class="converged-value mono" id="phase1-count">— hits</span>
                                 </div>
                                 <div class="converged-row">
                                     <span class="converged-label">Spread (±)</span>
-                                    <span class="converged-value mono" id="conv-spread">—</span>
+                                    <span class="converged-value mono" id="phase1-spread">—</span>
                                 </div>
-                                <button class="converged-transmit-btn" id="btn-conv-transmit" disabled>TRANSMIT CONVERGED</button>
+                                <div style="display:flex; gap:6px; margin-top:8px;">
+                                    <button class="converged-transmit-btn" id="btn-phase1-transmit" disabled style="flex:1;">TRANSMIT</button>
+                                    <button class="converged-transmit-btn" id="btn-phase1-delete" disabled style="flex:0.4; background:var(--accent-red); opacity:0.8;">DELETE</button>
+                                </div>
                             </div>
+                        </div>
+
+                        <!-- Phase 2: Final Estimate Card -->
+                        <div id="phase2-estimate-card" class="converged-card converged-disabled">
+                            <div class="converged-header">
+                                <span class="converged-star" style="color:#00e676;">②</span>
+                                <span class="converged-title">PHASE 2 — FINAL ESTIMATE</span>
+                                <span class="converged-badge" id="phase2-status-badge">EMPTY</span>
+                            </div>
+                            <div class="converged-body" id="phase2-body">
+                                <div class="converged-row">
+                                    <span class="converged-label">Latitude</span>
+                                    <span class="converged-value mono" id="phase2-lat">—</span>
+                                </div>
+                                <div class="converged-row">
+                                    <span class="converged-label">Longitude</span>
+                                    <span class="converged-value mono" id="phase2-lon">—</span>
+                                </div>
+                                <div class="converged-row">
+                                    <span class="converged-label">Based On</span>
+                                    <span class="converged-value mono" id="phase2-count">— hits</span>
+                                </div>
+                                <div class="converged-row">
+                                    <span class="converged-label">Spread (±)</span>
+                                    <span class="converged-value mono" id="phase2-spread">—</span>
+                                </div>
+                                <div style="display:flex; gap:6px; margin-top:8px;">
+                                    <button class="converged-transmit-btn" id="btn-phase2-transmit" disabled style="flex:1;">TRANSMIT</button>
+                                    <button class="converged-transmit-btn" id="btn-phase2-delete" disabled style="flex:0.4; background:var(--accent-red); opacity:0.8;">DELETE</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Phase Selection Controls -->
+                        <div style="padding:8px; background:var(--surface-light); border-radius:8px; border:1px solid var(--border-color);">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                <span style="font-size:0.72rem; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-secondary);">Active Phase</span>
+                            </div>
+                            <div style="display:flex; gap:6px;">
+                                <button class="btn-secondary" id="btn-phase-1-select" style="flex:1; font-size:0.7rem; padding:6px; background:var(--accent-orange); color:#000; font-weight:700;">① PHASE 1</button>
+                                <button class="btn-secondary" id="btn-phase-2-select" style="flex:1; font-size:0.7rem; padding:6px;">② PHASE 2</button>
+                            </div>
+                            <p style="font-size:0.62rem; color:var(--text-muted); margin-top:6px; text-align:center;">New triangulation hits go into the active phase.</p>
                         </div>
 
                         <!-- Raw Hit Log -->
