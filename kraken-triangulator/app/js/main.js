@@ -856,6 +856,35 @@
                 if (dzInnerRow) dzInnerRow.style.display = 'none';
                 if (dzOuterRow) dzOuterRow.style.display = 'none';
             }
+
+            // LS vs Bayesian Disagreement Metric
+            // Ported from Mikoto's triangulation-update-len branch.
+            // Only populated when algo='bayesian' and the hybrid solver
+            // ran both LS-AoA and Bayesian, producing lsDisagreement_m.
+            const disagreeEl = document.getElementById('res-ls-disagreement');
+            const disagreeRow = document.getElementById('result-item-disagreement');
+            if (result.lsDisagreement_m != null) {
+                const d = result.lsDisagreement_m;
+                if (disagreeRow) disagreeRow.style.display = '';
+                if (disagreeEl) {
+                    const isEmpD = document.getElementById('setting-units')?.value === 'imperial';
+                    let label;
+                    if (isEmpD) {
+                        const dFt = d * 3.28084;
+                        label = dFt >= 5280 ? `${(dFt/5280).toFixed(2)} mi` : `${dFt.toFixed(1)} ft`;
+                    } else {
+                        label = d >= 1000 ? `${(d/1000).toFixed(2)} km` : `${d.toFixed(1)} m`;
+                    }
+                    disagreeEl.textContent = label;
+                    // Color coding: green = agree, amber = moderate, red = diverge
+                    if (d < 50)       disagreeEl.style.color = '#00e87a';  // Green: strong agreement
+                    else if (d < 200) disagreeEl.style.color = '#ffb84d';  // Amber: moderate disagreement
+                    else              disagreeEl.style.color = '#ff6b6b';  // Red: large disagreement
+                }
+            } else {
+                // Hide when not in Bayesian mode
+                if (disagreeRow) disagreeRow.style.display = 'none';
+            }
         } else {
             ['res-lat','res-lon','res-error','res-stations'].forEach(id => set(id, '—'));
             // Hide drop zone rows when no result
@@ -967,7 +996,15 @@
             filterPoly: document.getElementById('btn-draw-poly-toggle')?.checked ?? false,
             filterAngular: elFilterAngular?.checked ?? true,
             aabb: aabb,
-            polyBounds: polyBounds
+            polyBounds: polyBounds,
+            // Bayesian Prior Box — injected for the hybrid solver in
+            // triangulation.js (ported from Mikoto's triangulation-update-len).
+            // Currently null because we skipped the Prior Box UI controls
+            // in favor of our Draw Area mask. When null, bayesianGrid()
+            // falls back to the legacy 15 km / 100 m grid.
+            // TODO: Wire to a UI input or derive from the draw mask center
+            //       once the prior box feature is promoted.
+            priorConfig: null,
         };
 
         const algo   = elAlgo?.value || 'ls_aoa';

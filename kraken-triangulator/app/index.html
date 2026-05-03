@@ -114,6 +114,15 @@
                                 <span class="result-label">OBS. USED / TOTAL</span>
                                 <span class="result-value mono" id="res-stations">—</span>
                             </div>
+                            <!-- LS vs Bayesian Disagreement — ported from Mikoto's
+                                 triangulation-update-len branch. Only visible when
+                                 algo = 'bayesian'. Shows how far apart LS-AoA and
+                                 Bayesian estimates are (green=agree, red=diverge). -->
+                            <div class="result-item" id="result-item-disagreement"
+                                title="Distance between LS-AoA estimate and Bayesian estimate. Green=agree, Amber=slight disagreement, Red=large disagreement. Only shown in Bayesian mode.">
+                                <span class="result-label">LS vs BAYES</span>
+                                <span class="result-value mono" id="res-ls-disagreement">—</span>
+                            </div>
                             <div class="result-item" id="res-ref-row" style="display:none; border-top:1px solid var(--border); padding-top:8px; margin-top:4px;">
                                 <span class="result-label" style="color:var(--accent-green);">Δ REF. DISTANCE</span>
                                 <span class="result-value mono" id="res-ref-dist" style="color:var(--accent-cyan);">—</span>

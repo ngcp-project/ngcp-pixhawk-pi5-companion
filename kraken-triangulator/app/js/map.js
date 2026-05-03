@@ -1101,11 +1101,37 @@ const MapView = (() => {
         return _gtMarkers.map(o => ({ id: o.id, lat: o.lat, lon: o.lon, label: o.label }));
     }
 
+    // ── getMap() — Raw Leaflet Map Accessor ────────────────────────
+    // Exposes the private Leaflet L.map instance (`_map`) to external
+    // modules (e.g., main.js) so they can draw arbitrary Leaflet layers
+    // (rectangles, polygons, custom markers) directly onto the map
+    // without routing through a dedicated MapView wrapper method.
+    //
+    // ORIGIN:   Ported from Mikoto's `triangulation-update-len` branch.
+    //           Originally used by _drawPriorBoxOnMap() to render a
+    //           Bayesian prior-box rectangle from main.js.
+    //
+    // STATUS:   INACTIVE — No callers in the current codebase.
+    //           Retained for future feature promotion (e.g., drawing
+    //           custom overlays, search-area refinement visuals, or
+    //           ERU marker pins directly from main.js).
+    //
+    // USAGE:    const map = MapView.getMap();
+    //           L.rectangle([[lat1,lon1],[lat2,lon2]]).addTo(map);
+    //
+    // WARNING:  Bypasses MapView encapsulation. Layers added via this
+    //           getter are NOT managed by MapView's lifecycle methods
+    //           (update, clear, refresh). The caller is responsible for
+    //           cleanup (removeLayer) to avoid memory leaks or stale
+    //           visuals.
+    function getMap() { return _map; }
+
     return { 
         init, update, setTile, setLineLength, setShowUncertainty, setShowDropZones, getDropZoneRadii, invalidateSize,
         addHeatPoint, clearHeat, setHeatGrid, setHeatRadius, setHeatBlur, setHeatOpacity, getHeatPointCount,
         getMaskGeoJSON, refreshCustomMarkers: _refreshCustomMarkers,
         addGroundTruth, removeGroundTruth, clearGroundTruth, getGroundTruthMarkers,
+        getMap,  // [FUTURE] Raw Leaflet map accessor — see comment block above
     };
 })();
 
