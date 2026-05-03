@@ -331,10 +331,13 @@
                 _estimationHits = [];
                 _phase1Result = null;
                 _phase2Result = null;
+                _activePhase = 1;
                 _redrawEstimationMarkers();
                 _renderEstimationLog();
                 _updatePhaseCard(1, null);
                 _updatePhaseCard(2, null);
+                // Reset phase selector visual to Phase 1
+                _setActivePhase(1);
             }
         });
 
@@ -343,6 +346,14 @@
         const btnPhase2 = document.getElementById('btn-phase-2-select');
 
         function _setActivePhase(phase) {
+            // Clear shared hit pool on phase switch so convergence
+            // for the new phase starts fresh (previous phase's result
+            // is already frozen in _phase1Result/_phase2Result).
+            if (phase !== _activePhase) {
+                _estimationHits = [];
+                _redrawEstimationMarkers();
+                _renderEstimationLog();
+            }
             _activePhase = phase;
             if (btnPhase1 && btnPhase2) {
                 if (phase === 1) {
@@ -361,7 +372,7 @@
                     btnPhase1.style.fontWeight = '';
                 }
             }
-            console.log(`[Estimation] Active phase set to Phase ${phase}`);
+            console.log(`[Estimation] Active phase set to Phase ${phase} — hit pool cleared`);
         }
 
         btnPhase1?.addEventListener('click', () => _setActivePhase(1));
