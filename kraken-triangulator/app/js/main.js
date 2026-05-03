@@ -50,6 +50,7 @@
     let _priorLon = null;       // Center longitude of the prior box
     let _priorBoxLayer = null;  // Leaflet rectangle on the main map
     let _priorBoxPlacementMode = false; // True when waiting for a map click
+    let _priorBoxLocked = false;        // When true, dragging is disabled to prevent accidental moves
 
     function initEstimationMap() {
         if (_estimationMap) {
@@ -766,34 +767,43 @@
             }
         ).addTo(map);
 
-        // Make the rectangle draggable so operator can reposition
-        _priorBoxLayer.on('mousedown', function(e) {
-            L.DomEvent.stopPropagation(e);
-            map.dragging.disable();
-            const startLatLng = e.latlng;
-            const startCenter = { lat: _priorLat, lon: _priorLon };
+        // Make the rectangle draggable so operator can reposition.
+        // When _priorBoxLocked is true, the mousedown is ignored and
+        // the rectangle is non-interactive so clicks pass through to
+        // the underlying map (prevents accidental moves while the
+        // operator is navigating or using Draw Area/Polygon tools).
+        if (_priorBoxLocked) {
+            _priorBoxLayer.options.interactive = false;
+        } else {
+            _priorBoxLayer.on('mousedown', function(e) {
+                if (_priorBoxLocked) return; // Double-guard in case state changed
+                L.DomEvent.stopPropagation(e);
+                map.dragging.disable();
+                const startLatLng = e.latlng;
+                const startCenter = { lat: _priorLat, lon: _priorLon };
 
-            function onMove(moveEvt) {
-                const dLat = moveEvt.latlng.lat - startLatLng.lat;
-                const dLon = moveEvt.latlng.lng - startLatLng.lng;
-                _priorLat = startCenter.lat + dLat;
-                _priorLon = startCenter.lon + dLon;
-                _drawPriorBoxOnMap(_getPriorConfig());
-                _updatePriorBoxUI();
-            }
+                function onMove(moveEvt) {
+                    const dLat = moveEvt.latlng.lat - startLatLng.lat;
+                    const dLon = moveEvt.latlng.lng - startLatLng.lng;
+                    _priorLat = startCenter.lat + dLat;
+                    _priorLon = startCenter.lon + dLon;
+                    _drawPriorBoxOnMap(_getPriorConfig());
+                    _updatePriorBoxUI();
+                }
 
-            function onUp() {
-                map.off('mousemove', onMove);
-                map.off('mouseup', onUp);
-                map.dragging.enable();
-                // Re-solve with the new position
-                if (_lastData) _processData(_lastData);
-                console.log(`[PriorBox] Repositioned to (${_priorLat.toFixed(6)}, ${_priorLon.toFixed(6)})`);
-            }
+                function onUp() {
+                    map.off('mousemove', onMove);
+                    map.off('mouseup', onUp);
+                    map.dragging.enable();
+                    // Re-solve with the new position
+                    if (_lastData) _processData(_lastData);
+                    console.log(`[PriorBox] Repositioned to (${_priorLat.toFixed(6)}, ${_priorLon.toFixed(6)})`);
+                }
 
-            map.on('mousemove', onMove);
-            map.on('mouseup', onUp);
-        });
+                map.on('mousemove', onMove);
+                map.on('mouseup', onUp);
+            });
+        }
 
         // Tooltip showing the center coordinates
         _priorBoxLayer.bindTooltip(
@@ -825,10 +835,13 @@
         _priorLat = null;
         _priorLon = null;
         _priorBoxPlacementMode = false;
+        _priorBoxLocked = false;
         _drawPriorBoxOnMap(null);
         _updatePriorBoxUI();
         const toggle = document.getElementById('btn-prior-box-toggle');
         if (toggle) toggle.checked = false;
+        const lockEl = document.getElementById('prior-box-lock');
+        if (lockEl) lockEl.checked = false;
         const infoBlock = document.getElementById('prior-box-info');
         if (infoBlock) infoBlock.style.display = 'none';
         // Re-solve without prior
@@ -869,6 +882,19 @@
 
     document.getElementById('btn-prior-box-clear')?.addEventListener('click', () => {
         _clearPriorBox();
+    });
+
+    // Lock toggle: when checked, the Prior Box rectangle becomes
+    // non-interactive (clicks pass through to the map) and dragging
+    // is disabled. Prevents accidental repositioning while the
+    // operator uses other map tools or navigates.
+    document.getElementById('prior-box-lock')?.addEventListener('change', (e) => {
+        _priorBoxLocked = e.target.checked;
+        // Redraw the box to apply/remove the interactive flag
+        if (_priorLat != null && _priorLon != null) {
+            _drawPriorBoxOnMap(_getPriorConfig());
+        }
+        console.log(`[PriorBox] Lock ${_priorBoxLocked ? 'ENABLED' : 'DISABLED'}`);
     });
 
     document.getElementById('btn-clear-all-overlays')?.addEventListener('click', () => {
