@@ -30,6 +30,27 @@
     let _phase1Result = null;  // { lat, lon, spreadM, count } or null
     let _phase2Result = null;  // { lat, lon, spreadM, count } or null
 
+    // ── Prior Box State ──────────────────────────────────────────
+    // Ported from Mikoto's triangulation-update-len branch and
+    // promoted to a full interactive feature. The Prior Box defines
+    // a fixed 1 km × 1 km area where the Bayesian solver searches
+    // at 5 m resolution (40,000 cells) instead of the default
+    // 15 km / 100 m grid (22,500 cells but much coarser).
+    //
+    // Workflow:
+    //   1. Operator toggles "Prior Box" checkbox
+    //   2. Clicks on the GPS map to place the box center
+    //   3. A fixed 1 km × 1 km dashed cyan rectangle appears
+    //   4. Rectangle is draggable to reposition
+    //   5. Bayesian solver uses this as its search domain
+    //
+    // Independent of Draw Area/Polygon (those filter bearings;
+    // this focuses the solver's search space).
+    let _priorLat = null;       // Center latitude of the prior box
+    let _priorLon = null;       // Center longitude of the prior box
+    let _priorBoxLayer = null;  // Leaflet rectangle on the main map
+    let _priorBoxPlacementMode = false; // True when waiting for a map click
+
     function initEstimationMap() {
         if (_estimationMap) {
             _estimationMap.invalidateSize();
@@ -680,10 +701,181 @@
         if (window.togglePolyLock) window.togglePolyLock(e.target.checked);
     });
 
+    // ── Prior Box Functions ──────────────────────────────────────
+    // These implement the click-to-place 1 km × 1 km high-resolution
+    // search zone on the GPS map, using MapView.getMap() to draw
+    // a Leaflet rectangle directly.
+
+    /**
+     * _getPriorConfig — Returns a priorConfig object for triangulation.js
+     * or null if no prior box is placed. The Bayesian solver uses this
+     * to determine its search domain.
+     */
+    function _getPriorConfig() {
+        if (_priorLat == null || _priorLon == null) return null;
+        if (isNaN(_priorLat) || isNaN(_priorLon)) return null;
+        return {
+            centerLat: _priorLat,
+            centerLon: _priorLon,
+            halfSizeM: 500, // 500 m each direction → 1 km × 1 km total
+        };
+    }
+
+    /**
+     * _drawPriorBoxOnMap — Draws (or redraws) the prior box as a
+     * dashed cyan rectangle on the GPS map. The rectangle is draggable
+     * so the operator can reposition it after placement.
+     *
+     * Uses MapView.getMap() to access the raw Leaflet map instance.
+     * If getMap() is not available, silently skips (math still works).
+     */
+    function _drawPriorBoxOnMap(priorConfig) {
+        // Remove old box if present
+        if (_priorBoxLayer) {
+            try {
+                const map = MapView.getMap();
+                if (map) map.removeLayer(_priorBoxLayer);
+            } catch (e) { /* ignore */ }
+            _priorBoxLayer = null;
+        }
+        if (!priorConfig) return;
+
+        if (typeof MapView.getMap !== 'function') {
+            console.warn('[PriorBox] MapView.getMap() not available — box not drawn.');
+            return;
+        }
+
+        // Build the lat/lon bounding box from the center
+        const box = Triangulation.buildPriorBox(
+            priorConfig.centerLat,
+            priorConfig.centerLon,
+            priorConfig.halfSizeM
+        );
+
+        const map = MapView.getMap();
+        _priorBoxLayer = L.rectangle(
+            [[box.minLat, box.minLon], [box.maxLat, box.maxLon]],
+            {
+                color: '#00d4ff',       // Distinct cyan (not green/orange/white)
+                weight: 2,
+                dashArray: '8 4',       // Dashed to distinguish from Draw Area (solid)
+                fill: true,
+                fillColor: '#00d4ff',
+                fillOpacity: 0.06,
+                interactive: true,
+            }
+        ).addTo(map);
+
+        // Make the rectangle draggable so operator can reposition
+        _priorBoxLayer.on('mousedown', function(e) {
+            L.DomEvent.stopPropagation(e);
+            map.dragging.disable();
+            const startLatLng = e.latlng;
+            const startCenter = { lat: _priorLat, lon: _priorLon };
+
+            function onMove(moveEvt) {
+                const dLat = moveEvt.latlng.lat - startLatLng.lat;
+                const dLon = moveEvt.latlng.lng - startLatLng.lng;
+                _priorLat = startCenter.lat + dLat;
+                _priorLon = startCenter.lon + dLon;
+                _drawPriorBoxOnMap(_getPriorConfig());
+                _updatePriorBoxUI();
+            }
+
+            function onUp() {
+                map.off('mousemove', onMove);
+                map.off('mouseup', onUp);
+                map.dragging.enable();
+                // Re-solve with the new position
+                if (_lastData) _processData(_lastData);
+                console.log(`[PriorBox] Repositioned to (${_priorLat.toFixed(6)}, ${_priorLon.toFixed(6)})`);
+            }
+
+            map.on('mousemove', onMove);
+            map.on('mouseup', onUp);
+        });
+
+        // Tooltip showing the center coordinates
+        _priorBoxLayer.bindTooltip(
+            `Prior Box: ${priorConfig.centerLat.toFixed(6)}, ${priorConfig.centerLon.toFixed(6)}\n1 km × 1 km @ 5 m`,
+            { permanent: false, direction: 'top' }
+        );
+    }
+
+    /**
+     * _updatePriorBoxUI — Updates the sidebar info display with the
+     * current prior box center coordinates.
+     */
+    function _updatePriorBoxUI() {
+        const centerEl = document.getElementById('prior-box-center');
+        if (centerEl) {
+            if (_priorLat != null && _priorLon != null) {
+                centerEl.textContent = `${_priorLat.toFixed(6)}, ${_priorLon.toFixed(6)}`;
+            } else {
+                centerEl.textContent = '\u2014 click map \u2014';
+            }
+        }
+    }
+
+    /**
+     * _clearPriorBox — Removes the prior box from the map and resets
+     * all state. The solver will fall back to the legacy 15 km grid.
+     */
+    function _clearPriorBox() {
+        _priorLat = null;
+        _priorLon = null;
+        _priorBoxPlacementMode = false;
+        _drawPriorBoxOnMap(null);
+        _updatePriorBoxUI();
+        const toggle = document.getElementById('btn-prior-box-toggle');
+        if (toggle) toggle.checked = false;
+        const infoBlock = document.getElementById('prior-box-info');
+        if (infoBlock) infoBlock.style.display = 'none';
+        // Re-solve without prior
+        if (_lastData) _processData(_lastData);
+        console.log('[PriorBox] Cleared.');
+    }
+
+    // ── Prior Box UI Wiring ──────────────────────────────────────
+    document.getElementById('btn-prior-box-toggle')?.addEventListener('change', (e) => {
+        const infoBlock = document.getElementById('prior-box-info');
+        if (e.target.checked) {
+            // Enter placement mode: next map click places the box
+            _priorBoxPlacementMode = true;
+            if (infoBlock) infoBlock.style.display = '';
+            console.log('[PriorBox] Placement mode active — click on the map.');
+
+            // Register one-time map click handler for placement
+            if (typeof MapView.getMap === 'function') {
+                const map = MapView.getMap();
+                const _onMapClickForPrior = (e) => {
+                    if (!_priorBoxPlacementMode) return;
+                    _priorLat = e.latlng.lat;
+                    _priorLon = e.latlng.lng;
+                    _priorBoxPlacementMode = false;
+                    _drawPriorBoxOnMap(_getPriorConfig());
+                    _updatePriorBoxUI();
+                    // Re-solve immediately with the new prior
+                    if (_lastData) _processData(_lastData);
+                    map.off('click', _onMapClickForPrior);
+                    console.log(`[PriorBox] Placed at (${_priorLat.toFixed(6)}, ${_priorLon.toFixed(6)})`);
+                };
+                map.on('click', _onMapClickForPrior);
+            }
+        } else {
+            _clearPriorBox();
+        }
+    });
+
+    document.getElementById('btn-prior-box-clear')?.addEventListener('click', () => {
+        _clearPriorBox();
+    });
+
     document.getElementById('btn-clear-all-overlays')?.addEventListener('click', () => {
         if (window.clearMask) window.clearMask();
         if (window.clearPoly) window.clearPoly();
         if (MapView.clearHeat) MapView.clearHeat();
+        _clearPriorBox();
         
         const maskToggle = document.getElementById('btn-draw-mask-toggle');
         if (maskToggle) maskToggle.checked = false;
@@ -997,14 +1189,12 @@
             filterAngular: elFilterAngular?.checked ?? true,
             aabb: aabb,
             polyBounds: polyBounds,
-            // Bayesian Prior Box — injected for the hybrid solver in
-            // triangulation.js (ported from Mikoto's triangulation-update-len).
-            // Currently null because we skipped the Prior Box UI controls
-            // in favor of our Draw Area mask. When null, bayesianGrid()
-            // falls back to the legacy 15 km / 100 m grid.
-            // TODO: Wire to a UI input or derive from the draw mask center
-            //       once the prior box feature is promoted.
-            priorConfig: null,
+            // Bayesian Prior Box — when the operator has placed a Prior Box
+            // on the map, this provides the center coordinates and half-size
+            // to triangulation.js. The Bayesian solver switches from the
+            // legacy 15 km / 100 m grid to a focused 1 km / 5 m grid.
+            // Returns null if no Prior Box is active (falls back to legacy).
+            priorConfig: _getPriorConfig(),
         };
 
         const algo   = elAlgo?.value || 'ls_aoa';

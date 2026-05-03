@@ -254,6 +254,38 @@
                                     </div>
                                 </div>
 
+                                <!-- Prior Box — High-Resolution Bayesian Search Domain
+                                     Ported from Mikoto's triangulation-update-len branch.
+                                     Places a fixed 1 km x 1 km box on the map. The Bayesian
+                                     solver searches inside at 5 m resolution instead of the
+                                     default 15 km / 100 m grid. -->
+                                <div style="border-top:1px solid var(--border); padding-top:12px; margin-top:4px;">
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                        <label style="display:flex; align-items:center; gap:8px; font-size:0.75rem; cursor:pointer; color:#00d4ff;">
+                                            <input type="checkbox" id="btn-prior-box-toggle" style="width:14px; height:14px; accent-color:#00d4ff;">
+                                            <span style="font-weight:600;">&#x2B21; Prior Box</span>
+                                        </label>
+                                        <button class="btn-secondary btn-icon-text" id="btn-prior-box-clear" style="padding:4px 8px; font-size:0.65rem; color:#00d4ff;">
+                                            Clear
+                                        </button>
+                                    </div>
+                                    <div id="prior-box-info" style="display:none;">
+                                        <p style="font-size:0.65rem; color:var(--text-muted); margin-bottom:8px; line-height:1.5;">
+                                            Click on the map to place a <strong style="color:#00d4ff;">1 km x 1 km</strong>
+                                            high-resolution search zone. Bayesian solver runs at
+                                            <strong style="color:#00d4ff;">5 m</strong> resolution inside this box.
+                                        </p>
+                                        <div class="result-item" style="margin-bottom:4px;">
+                                            <span class="result-label" style="color:#00d4ff;">BOX CENTER</span>
+                                            <span class="result-value mono" id="prior-box-center" style="color:#00d4ff;">&#x2014; click map &#x2014;</span>
+                                        </div>
+                                        <div class="result-item">
+                                            <span class="result-label" style="color:var(--text-muted);">RESOLUTION</span>
+                                            <span class="result-value mono" style="color:#00d4ff;">5 m (40,000 cells)</span>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <button class="btn-secondary" id="btn-clear-all-overlays" style="width:100%; margin-top:8px; display:flex; justify-content:center; align-items:center;">
                                     CLEAR ALL OVERLAYS
                                 </button>
