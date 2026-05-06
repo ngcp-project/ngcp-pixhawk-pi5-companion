@@ -3,6 +3,11 @@ import os
 import time
 import json
 
+# Ensure UTF-8 output regardless of terminal encoding (fixes UnicodeEncodeError
+# on Windows PowerShell sessions running CP1252 by default).
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
+
 # Add necessary paths to import gcs-infrastructure
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(BASE_DIR, 'gcs-infrastructure', 'Application'))
