@@ -17,9 +17,11 @@ const MapView = (() => {
     let _resultLayer    = null;   // Triangulated result + uncertainty circle
     let _customLayer    = null;   // User-placed custom markers
     let _heatLayer      = null;   // Triangulated result heatmap
+    let _distLineLayer  = null;   // Distance line from UAV to estimated result
     let _tileLayer      = null;
     let _lineLengthKm   = 2;
     let _showUncertainty = true;
+    let _showDistLine    = true;  // Toggle for distance line (UAV → estimated location)
     let _firstLoad       = true;  // Prevent permanent zoom-lock
 
     const OBS_COLOR     = '#4f8ef7';  // Blue-ish — historical observations
@@ -27,6 +29,7 @@ const MapView = (() => {
     const RESULT_COLOR = '#00ff00';
     const BEARING_COLOR = '#3498db'; // Kraken uses blue for bearings
     const HEADING_COLOR = '#e74c3c'; // Kraken uses red for vehicle heading
+    const DIST_LINE_COLOR = '#ffffff'; // White distance line (UAV → estimate)
 
     let _heatPoints = [];
     let _heatRadius = 30;
@@ -972,6 +975,49 @@ const MapView = (() => {
             }
         }
 
+        // ── Distance Line: UAV → Estimated Location ─────────────────
+        // Draws a dashed white line from the current UAV position to the
+        // triangulation result, with a midpoint label showing the distance.
+        // Toggled by the operator via the DIST. TO ESTIMATE Show checkbox.
+        if (_distLineLayer) { _distLineLayer.clearLayers(); }
+        if (!_distLineLayer) { _distLineLayer = L.layerGroup().addTo(_map); }
+
+        if (_showDistLine && current && result) {
+            // Dashed white line from UAV dot to result crosshair
+            const distPolyline = L.polyline(
+                [[current.lat, current.lon], [result.lat, result.lon]],
+                { color: DIST_LINE_COLOR, weight: 2, opacity: 0.6, dashArray: '8, 6' }
+            );
+            _distLineLayer.addLayer(distPolyline);
+
+            // Midpoint label showing the distance
+            const midLat = (current.lat + result.lat) / 2;
+            const midLon = (current.lon + result.lon) / 2;
+            const distM = _approxDistanceMeters(current.lat, current.lon, result.lat, result.lon);
+
+            const isImpDist = document.getElementById('setting-units')?.value === 'imperial';
+            let distLabel;
+            if (isImpDist) {
+                const ft = distM * 3.28084;
+                distLabel = ft >= 5280 ? `${(ft / 5280).toFixed(2)} mi` : `${ft.toFixed(0)} ft`;
+            } else {
+                distLabel = distM >= 1000 ? `${(distM / 1000).toFixed(2)} km` : `${distM.toFixed(0)} m`;
+            }
+
+            const distIcon = L.divIcon({
+                className: '',
+                html: `<div style="
+                    background: rgba(0,0,0,0.75); color: #fff; font-size: 11px;
+                    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+                    padding: 2px 6px; border-radius: 4px; white-space: nowrap;
+                    border: 1px solid rgba(255,255,255,0.3);
+                ">${distLabel}</div>`,
+                iconSize: [0, 0],
+                iconAnchor: [0, -8],
+            });
+            _distLineLayer.addLayer(L.marker([midLat, midLon], { icon: distIcon, interactive: false }));
+        }
+
         // Only snap to the bounds on the very first load to allow user complete zoom/pan freedom.
         if (bounds.length > 1 && _firstLoad) {
             _map.fitBounds(bounds, { padding: [40, 40], maxZoom: 17 });
@@ -982,8 +1028,18 @@ const MapView = (() => {
     function setLineLength(km) { _lineLengthKm = km; }
     function setShowUncertainty(val) { _showUncertainty = val; }
     function setShowDropZones(val) { _showDropZones = val; }
+    function setShowDistLine(val) { _showDistLine = val; }
     function getDropZoneRadii() { return { innerM: DROP_INNER_RADIUS_M, outerM: DROP_OUTER_RADIUS_M }; }
     function invalidateSize() { if (_map) _map.invalidateSize(); }
+
+    // Fallback distance calculation if TriangulationHelpers.haversineDistance is unavailable
+    function _approxDistanceMeters(lat1, lon1, lat2, lon2) {
+        const R = 6371000;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
 
     function addHeatPoint(lat, lon, intensity = 1.0) {
         _heatPoints.push([lat, lon, intensity]);
@@ -1127,7 +1183,7 @@ const MapView = (() => {
     function getMap() { return _map; }
 
     return { 
-        init, update, setTile, setLineLength, setShowUncertainty, setShowDropZones, getDropZoneRadii, invalidateSize,
+        init, update, setTile, setLineLength, setShowUncertainty, setShowDropZones, setShowDistLine, getDropZoneRadii, invalidateSize,
         addHeatPoint, clearHeat, setHeatGrid, setHeatRadius, setHeatBlur, setHeatOpacity, getHeatPointCount,
         getMaskGeoJSON, refreshCustomMarkers: _refreshCustomMarkers,
         addGroundTruth, removeGroundTruth, clearGroundTruth, getGroundTruthMarkers,

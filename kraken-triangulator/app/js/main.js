@@ -512,6 +512,13 @@
         MapView.setShowDropZones(elDropZones.checked);
         if (_lastData) _processData(_lastData);
     });
+
+    // Distance Line toggle — show/hide dashed line from UAV to estimate on map
+    const elDistLine = document.getElementById('setting-dist-line');
+    elDistLine?.addEventListener('change', () => {
+        MapView.setShowDistLine(elDistLine.checked);
+        if (_lastData) _processData(_lastData);
+    });
     elLineLength?.addEventListener('change', () => {
         const isImp = document.getElementById('setting-units')?.value === 'imperial';
         let len = parseFloat(elLineLength.value) || 2;
@@ -1054,6 +1061,45 @@
             
             set('res-stations', `${result.stationsUsed} / ${displayHistory.length}`);
 
+            // ── Vehicle Info: Heading, Yaw, Distance to Estimate ────
+            const rawYaw = current?.heading_used_deg;
+            if (rawYaw != null) {
+                // Heading: navigational 0-360 from north
+                const heading360 = ((rawYaw % 360) + 360) % 360;
+                set('res-heading', heading360.toFixed(1) + '\u00b0');
+                // Yaw: raw IMU value (can be negative)
+                set('res-yaw', rawYaw.toFixed(1) + '\u00b0');
+            } else {
+                set('res-heading', '\u2014');
+                set('res-yaw', '\u2014');
+            }
+
+            // Distance from current UAV position to estimated location
+            const distRow = document.getElementById('dist-to-est-row');
+            const distEl = document.getElementById('res-dist-to-est');
+            if (current && Triangulation && Triangulation.distanceMeters) {
+                const distM = Triangulation.distanceMeters(
+                    current.lat, current.lon, result.lat, result.lon
+                );
+                const isEmpDist = document.getElementById('setting-units')?.value === 'imperial';
+                let distText;
+                if (isEmpDist) {
+                    const ft = distM * 3.28084;
+                    distText = ft >= 5280 ? `${(ft / 5280).toFixed(2)} mi` : `${ft.toFixed(0)} ft`;
+                } else {
+                    distText = distM >= 1000 ? `${(distM / 1000).toFixed(2)} km` : `${distM.toFixed(0)} m`;
+                }
+                if (distEl) {
+                    distEl.textContent = distText;
+                    // Color coding: green=close, amber=moderate, red=far
+                    if (distM < 500)       distEl.style.color = '#00e87a';
+                    else if (distM < 2000) distEl.style.color = '#ffb84d';
+                    else                   distEl.style.color = '#ff6b6b';
+                }
+            } else {
+                if (distEl) { distEl.textContent = '\u2014'; distEl.style.color = '#ffffff'; }
+            }
+
             // Drop Zone indicator rows
             const dzToggle = document.getElementById('setting-drop-zones');
             const dzInnerRow = document.getElementById('drop-zone-inner-row');
@@ -1104,7 +1150,10 @@
                 if (disagreeRow) disagreeRow.style.display = 'none';
             }
         } else {
-            ['res-lat','res-lon','res-error','res-stations'].forEach(id => set(id, '—'));
+            ['res-lat','res-lon','res-error','res-stations','res-heading','res-yaw'].forEach(id => set(id, '\u2014'));
+            // Reset distance
+            const distElReset = document.getElementById('res-dist-to-est');
+            if (distElReset) { distElReset.textContent = '\u2014'; distElReset.style.color = '#ffffff'; }
             // Hide drop zone rows when no result
             const dzInnerRow2 = document.getElementById('drop-zone-inner-row');
             const dzOuterRow2 = document.getElementById('drop-zone-outer-row');

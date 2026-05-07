@@ -114,6 +114,35 @@
                                 <span class="result-label">OBS. USED / TOTAL</span>
                                 <span class="result-value mono" id="res-stations">—</span>
                             </div>
+
+                            <!-- Vehicle Info — Heading, Yaw, Distance to Estimate
+                                 Heading = navigational (0-360 from north).
+                                 Yaw = raw IMU reading from Pixhawk ATTITUDE msg.
+                                 Both derived from heading_used_deg; heading is
+                                 (yaw + 360) % 360 for compass convention. -->
+                            <div style="border-top:1px solid var(--border); padding-top:10px; margin-top:8px;">
+                                <span class="result-label" style="font-weight:700; letter-spacing:0.04em;">VEHICLE INFO</span>
+                                <div class="result-item" style="margin-top:6px;">
+                                    <span class="result-label">HEADING</span>
+                                    <span class="result-value mono" id="res-heading">—</span>
+                                </div>
+                                <div class="result-item">
+                                    <span class="result-label">YAW (IMU)</span>
+                                    <span class="result-value mono" id="res-yaw">—</span>
+                                </div>
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; margin-bottom:4px;">
+                                    <span class="result-label" style="font-weight:700; letter-spacing:0.04em;">DIST. TO ESTIMATE</span>
+                                    <label style="display:flex; align-items:center; gap:6px; font-size:0.68rem; color:var(--text-muted); cursor:pointer;">
+                                        <input type="checkbox" id="setting-dist-line" style="width:13px; height:13px;" checked>
+                                        Show
+                                    </label>
+                                </div>
+                                <div class="result-item" id="dist-to-est-row">
+                                    <span class="result-label" style="color:#ffffff;">DISTANCE</span>
+                                    <span class="result-value mono" id="res-dist-to-est" style="color:#ffffff;">—</span>
+                                </div>
+                            </div>
+
                             <!-- LS vs Bayesian Disagreement — ported from Mikoto's
                                  triangulation-update-len branch. Only visible when
                                  algo = 'bayesian'. Shows how far apart LS-AoA and
