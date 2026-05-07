@@ -83,6 +83,20 @@ _mav_upstream_ready = False # True once we've received at least one packet
 _eru_lock = threading.Lock()
 _eru_patient = {"lat": 0.0, "lon": 0.0, "received_at": 0}
 
+# ── Replay / Playback State ──────────────────────────────────────────────────
+# These must be initialized at module level so that _advance_waypoint() and
+# _build_response() don't crash with NameError when /api/bearings is called
+# before any replay file is loaded.
+_live_mode       = True      # True = live UDP telemetry; False = replay mode
+_mock_data       = None      # Loaded JSON data from replay file
+_waypoints       = []        # List of observation waypoints from replay
+_obs_index       = 1         # Current index into _waypoints (1-based)
+_obs_timestamps  = {}        # Maps waypoint IDs to ISO timestamps
+_last_advance_t  = 0.0       # time.time() of last auto-advance
+_paused          = True      # Playback paused by default
+_speed           = 1.0       # Playback speed multiplier
+BASE_ADVANCE_S   = 0.5       # Base interval (seconds) between auto-advances
+
 def _load_mock():
     global _mock_data, _waypoints, _obs_index, _last_advance_t, _obs_timestamps
     with open(MOCK_DATA_PATH, encoding='utf-8') as f:
