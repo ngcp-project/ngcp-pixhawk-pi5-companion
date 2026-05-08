@@ -576,10 +576,66 @@ def udp_listener_thread():
     while True:
         try:
             data, addr = sock.recvfrom(65535)
-            payload = json.loads(data.decode("utf-8"))
-            
-            # Translate MRA fusion records to Kraken schema
-            payload = _translate_fusion_record(payload)
+            envelope = json.loads(data.decode("utf-8"))
+
+            # ── mra_info_receiver envelope format ──────────────────────
+            # New format: {stream: "gcs_downlink", type: "...", data: {...}}
+            # Old format: raw fusion record dict (no "stream" key)
+            if envelope.get("stream") == "gcs_downlink":
+                msg_type = envelope.get("type", "")
+                inner = envelope.get("data", {})
+
+                if msg_type == "fusion_record":
+                    # Unwrap and process as normal fusion bearing
+                    payload = _translate_fusion_record(inner)
+                    if payload is None:
+                        continue
+                    if 'received_at' not in payload:
+                        payload['received_at'] = _now_iso()
+                    with _lock:
+                        _live_history.append(payload)
+                        _live_current = payload
+
+                elif msg_type == "search_area_zones":
+                    # Update server-side search area for the Kraken map
+                    coords = inner.get("coordinates", [])
+                    if isinstance(coords, list) and len(coords) >= 3:
+                        with _search_area_lock:
+                            _search_area["coordinates"] = coords
+                            _search_area["updated_at"] = time.time()
+                        logger.info(f"Search area received via downlink: {len(coords)} vertices")
+
+                elif msg_type == "eru_reported_location":
+                    # Update ERU patient position
+                    eru_lat = inner.get("lat")
+                    eru_lon = inner.get("lon")
+                    if eru_lat is not None and eru_lon is not None:
+                        with _eru_lock:
+                            _eru_patient["lat"] = float(eru_lat)
+                            _eru_patient["lon"] = float(eru_lon)
+                            _eru_patient["received_at"] = time.time()
+                        logger.info(f"ERU location received via downlink: ({eru_lat}, {eru_lon})")
+
+                elif msg_type == "target_ack":
+                    # Log target acknowledgements for operator awareness
+                    target = inner.get("target", "unknown")
+                    ack = inner.get("ack", "unknown")
+                    logger.info(f"Target ACK received: {target} → {ack}")
+
+                elif msg_type in ("mission_status", "active_plan_summary",
+                                  "active_plan_full", "flight_mode_event",
+                                  "autonomy_event", "rtl_event"):
+                    # Informational — log for now, future UI tabs can consume
+                    logger.info(f"Downlink message: type={msg_type}")
+
+                else:
+                    logger.debug(f"Unknown downlink type: {msg_type}")
+
+                continue  # Envelope handled — skip legacy path
+
+            # ── Legacy raw fusion record format ────────────────────────
+            # Direct from old fusion_receiver.py (no envelope wrapper)
+            payload = _translate_fusion_record(envelope)
             if payload is None:
                 continue
                 
