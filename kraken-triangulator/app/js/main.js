@@ -469,6 +469,29 @@
                 // Silently ignore — ERU data is optional
             }
         }, 3000);
+
+        // ── Search Area Polling ───────────────────────────────────────
+        // Polls /api/search_area every 10 seconds for GCS-defined boundary.
+        // Renders the polygon on the GPS map and stores coordinates for
+        // transmit safety validation.
+        let _searchAreaCoords = null;
+        setInterval(async () => {
+            try {
+                const res = await fetch(window.location.origin + '/api/search_area');
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data.coordinates && data.coordinates.length >= 3) {
+                    const key = JSON.stringify(data.coordinates);
+                    if (key !== JSON.stringify(_searchAreaCoords)) {
+                        _searchAreaCoords = data.coordinates;
+                        MapView.setSearchArea(data.coordinates);
+                        console.log(`[Search Area] Polygon updated: ${data.coordinates.length} vertices`);
+                    }
+                }
+            } catch (e) {
+                // Silently ignore — search area is optional
+            }
+        }, 10000);
     });
 
     tabButtons.forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));

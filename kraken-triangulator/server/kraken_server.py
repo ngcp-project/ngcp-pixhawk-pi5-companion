@@ -83,6 +83,12 @@ _mav_upstream_ready = False # True once we've received at least one packet
 _eru_lock = threading.Lock()
 _eru_patient = {"lat": 0.0, "lon": 0.0, "received_at": 0}
 
+# ── Search Area State ─────────────────────────────────────────────────────────
+# GCS-defined search area polygon. Can be set via POST /api/search_area for
+# testing, or relayed from Pi 5 in the future via MAVLink STATUSTEXT chunks.
+_search_area_lock = threading.Lock()
+_search_area = {"coordinates": [], "updated_at": 0}
+
 # ── Replay / Playback State ──────────────────────────────────────────────────
 # These must be initialized at module level so that _advance_waypoint() and
 # _build_response() don't crash with NameError when /api/bearings is called
@@ -501,6 +507,31 @@ def get_eru_patient():
     Pi 5 (which receives them from GCS Station via XBee PatientLocation command)."""
     with _eru_lock:
         return jsonify(_eru_patient)
+
+@app.route("/api/search_area", methods=["GET", "POST"])
+def search_area_endpoint():
+    """GET: Returns the current GCS-defined search area polygon.
+    POST: Sets the search area (for testing without GCS pipeline).
+    
+    POST body: { "coordinates": [[lat, lon], [lat, lon], ...] }
+    
+    The Kraken App renders this polygon on both the GPS map and estimation
+    map as a safety boundary — the operator cannot accidentally transmit
+    a target location outside this zone.
+    """
+    if request.method == "POST":
+        body = request.get_json(force=True) or {}
+        coords = body.get("coordinates", [])
+        if not isinstance(coords, list) or len(coords) < 3:
+            return jsonify({"error": "Need at least 3 coordinate pairs"}), 400
+        with _search_area_lock:
+            _search_area["coordinates"] = coords
+            _search_area["updated_at"] = time.time()
+        logger.info(f"Search area set via POST: {len(coords)} vertices")
+        return jsonify({"status": "ok", "vertices": len(coords)})
+    else:
+        with _search_area_lock:
+            return jsonify(_search_area)
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
 

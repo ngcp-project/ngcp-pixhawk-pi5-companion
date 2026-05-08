@@ -55,6 +55,11 @@ const MapView = (() => {
     let _eruMarker = null;       // Leaflet marker for ERU patient coordinates
     let _eruCircle = null;       // Subtle highlight circle around ERU marker
     const ERU_MARKER_COLOR = '#ff2222';  // Red — distinctive from result (green)
+
+    // Search Area Polygon (GCS-defined boundary)
+    let _searchAreaPolygon = null;  // Leaflet polygon for search area boundary
+    const SEARCH_AREA_COLOR = '#f1c40f';   // Yellow/amber — safety boundary
+    const SEARCH_AREA_FILL  = 'rgba(241, 196, 15, 0.08)';  // Very subtle fill
     
     // Masking variables
     let _maskLayer = null;
@@ -1187,6 +1192,45 @@ const MapView = (() => {
     //           visuals.
     function getMap() { return _map; }
 
+    // ── Search Area Polygon ────────────────────────────────────────
+    // Renders the GCS-defined search area boundary on the GPS map.
+    // Acts as a visual safety check — the operator can see whether
+    // their triangulation result falls within the designated zone.
+    function setSearchArea(coordinates) {
+        if (!_map) return;
+        if (!Array.isArray(coordinates) || coordinates.length < 3) return;
+
+        // Remove existing polygon
+        if (_searchAreaPolygon) {
+            _searchAreaPolygon.remove();
+            _searchAreaPolygon = null;
+        }
+
+        // Leaflet expects [lat, lon] pairs
+        const latlngs = coordinates.map(c => [c[0], c[1]]);
+
+        _searchAreaPolygon = L.polygon(latlngs, {
+            color: SEARCH_AREA_COLOR,
+            fillColor: SEARCH_AREA_FILL,
+            fillOpacity: 0.08,
+            weight: 2,
+            dashArray: '8 4',
+            interactive: false  // Don't steal clicks from markers
+        }).addTo(_map);
+
+        _searchAreaPolygon.bindTooltip('Search Area', {
+            permanent: false, direction: 'center',
+            className: 'search-area-tooltip'
+        });
+    }
+
+    function clearSearchArea() {
+        if (_searchAreaPolygon) {
+            _searchAreaPolygon.remove();
+            _searchAreaPolygon = null;
+        }
+    }
+
     // ── ERU Patient Location Marker ──────────────────────────────
     // Renders a distinctive red cross marker at the ERU-reported
     // survivor location. Called from main.js ERU polling callback.
@@ -1254,6 +1298,7 @@ const MapView = (() => {
         getMaskGeoJSON, refreshCustomMarkers: _refreshCustomMarkers,
         addGroundTruth, removeGroundTruth, clearGroundTruth, getGroundTruthMarkers,
         setEruMarker, clearEruMarker,
+        setSearchArea, clearSearchArea,
         getMap,  // [FUTURE] Raw Leaflet map accessor — see comment block above
     };
 })();
