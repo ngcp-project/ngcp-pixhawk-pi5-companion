@@ -344,59 +344,65 @@ def main():
                 # TODO: add a new command to reset the flag or a timeout mechanism
                 telemetry.MessageFlag = 2  # 2 = Patient per GCS Telemetry spec
             
-            # Encode and transmit telemetry over XBee.
+            # Encode telemetry payload (needed for both XBee TX and JSON dump)
             try:
                 payload_bytes = telemetry.Encode()
                 hex_str = ' '.join(f'{b:02x}' for b in payload_bytes)
+            except Exception as enc_e:
+                logger.error(f'Telemetry encoding error: {enc_e}')
+                payload_bytes = b''
+                hex_str = ''
 
-                SendTelemetry(telemetry)
-                logger.info(f'XBee -> Tlm Packet Queued: [{len(payload_bytes)}B] {hex_str}')
-                
-                # Dump state for GUI (this is for UI/Dashboard reference only gui_server.py)
-                # Also consumed by gcs_bridge.py (ngcp-uav-software) which reads
-                # mra_refined_*, mra_final_*, zones, and eru_* fields to update
-                # navigation_state.json for autonomous mission planning.
+            # Transmit over XBee (may fail if radio is disconnected)
+            if payload_bytes:
                 try:
-                    state_dump = {
-                        "lat": telemetry.CurrentPositionX,
-                        "lon": telemetry.CurrentPositionY,
-                        "alt": telemetry.Altitude,
-                        "speed": telemetry.Speed,
-                        "pitch": telemetry.Pitch,
-                        "roll": telemetry.Roll,
-                        "yaw": telemetry.Yaw,
-                        "battery": raw_battery_mv,
-                        "hex_payload": hex_str,
-                        "last_updated": telemetry.LastUpdated,
-                        "latest_command": latest_command,
-                        "message_flag": telemetry.MessageFlag,
-                        "target_lat": getattr(telemetry, 'MessageLat', 0.0),
-                        "target_lon": getattr(telemetry, 'MessageLon', 0.0),
-                        # MRA Phase 1 — Refined Loiter Target (internal only)
-                        "mra_refined_lat": getattr(telemetry, '_mra_refined_lat', 0.0),
-                        "mra_refined_lon": getattr(telemetry, '_mra_refined_lon', 0.0),
-                        "mra_refined_confidence": getattr(telemetry, '_mra_refined_spread', None),
-                        "mra_refined_fix_id": "mra_refined_001" if getattr(telemetry, '_mra_refined_mtime', 0) > 0 else None,
-                        # MRA Phase 2 — Final Estimated Location (sent to GCS)
-                        "mra_final_lat": getattr(telemetry, '_mra_final_lat', 0.0),
-                        "mra_final_lon": getattr(telemetry, '_mra_final_lon', 0.0),
-                        "mra_final_confidence": getattr(telemetry, '_mra_final_spread', None),
-                        "mra_final_fix_id": "mra_final_001" if getattr(telemetry, '_mra_final_mtime', 0) > 0 else None,
-                        # ERU Patient Location (from GCS PatientLocation command)
-                        "eru_lat": getattr(telemetry, '_eru_lat', 0.0),
-                        "eru_lon": getattr(telemetry, '_eru_lon', 0.0),
-                        "eru_received_at": getattr(telemetry, '_eru_received_at', 0),
-                        "eru_fix_id": "eru_001" if getattr(telemetry, '_eru_received_at', 0) > 0 else None,
-                        # Search area zones from GCS AddZone commands
-                        "zones": getattr(telemetry, '_zones', []),
-                    }
-                    with open('/tmp/telemetry.json', 'w') as f:
-                        json.dump(state_dump, f)
-                except Exception as json_e:
-                    logger.error(f"Failed to write state JSON: {json_e}")
+                    SendTelemetry(telemetry)
+                    logger.info(f'XBee -> Tlm Packet Queued: [{len(payload_bytes)}B] {hex_str}')
+                except Exception as e:
+                    logger.error(f'XBee transmit error: {e}')
 
-            except Exception as e:
-                logger.error(f'Encoding or Transmit error: {e}')
+            # Dump state for GUI and gcs_bridge.py — ALWAYS write regardless
+            # of XBee status. gui_server.py serves this as /telemetry.json and
+            # gcs_bridge.py (ngcp-uav-software) reads mra_refined_*, mra_final_*,
+            # zones, and eru_* fields to update navigation_state.json.
+            try:
+                state_dump = {
+                    "lat": telemetry.CurrentPositionX,
+                    "lon": telemetry.CurrentPositionY,
+                    "alt": telemetry.Altitude,
+                    "speed": telemetry.Speed,
+                    "pitch": telemetry.Pitch,
+                    "roll": telemetry.Roll,
+                    "yaw": telemetry.Yaw,
+                    "battery": raw_battery_mv,
+                    "hex_payload": hex_str,
+                    "last_updated": telemetry.LastUpdated,
+                    "latest_command": latest_command,
+                    "message_flag": telemetry.MessageFlag,
+                    "target_lat": getattr(telemetry, 'MessageLat', 0.0),
+                    "target_lon": getattr(telemetry, 'MessageLon', 0.0),
+                    # MRA Phase 1 — Refined Loiter Target (internal only)
+                    "mra_refined_lat": getattr(telemetry, '_mra_refined_lat', 0.0),
+                    "mra_refined_lon": getattr(telemetry, '_mra_refined_lon', 0.0),
+                    "mra_refined_confidence": getattr(telemetry, '_mra_refined_spread', None),
+                    "mra_refined_fix_id": "mra_refined_001" if getattr(telemetry, '_mra_refined_mtime', 0) > 0 else None,
+                    # MRA Phase 2 — Final Estimated Location (sent to GCS)
+                    "mra_final_lat": getattr(telemetry, '_mra_final_lat', 0.0),
+                    "mra_final_lon": getattr(telemetry, '_mra_final_lon', 0.0),
+                    "mra_final_confidence": getattr(telemetry, '_mra_final_spread', None),
+                    "mra_final_fix_id": "mra_final_001" if getattr(telemetry, '_mra_final_mtime', 0) > 0 else None,
+                    # ERU Patient Location (from GCS PatientLocation command)
+                    "eru_lat": getattr(telemetry, '_eru_lat', 0.0),
+                    "eru_lon": getattr(telemetry, '_eru_lon', 0.0),
+                    "eru_received_at": getattr(telemetry, '_eru_received_at', 0),
+                    "eru_fix_id": "eru_001" if getattr(telemetry, '_eru_received_at', 0) > 0 else None,
+                    # Search area zones from GCS AddZone commands
+                    "zones": getattr(telemetry, '_zones', []),
+                }
+                with open('/tmp/telemetry.json', 'w') as f:
+                    json.dump(state_dump, f)
+            except Exception as json_e:
+                logger.error(f"Failed to write state JSON: {json_e}")
 
             last_send_time = current_time
 
