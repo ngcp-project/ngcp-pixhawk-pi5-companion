@@ -428,12 +428,22 @@ def stop_replay():
 
 @app.route("/api/transmit", methods=["POST"])
 def transmit():
-    """Bridge endpoint from UI to gcs_translator.py"""
+    """Bridge endpoint from UI to gcs_translator.py.
+    
+    Accepts a 'phase' field:
+      phase=1 → DEBUG_VECT('MRA_LOITER')  — refined loiter target (NOT relayed to GCS)
+      phase=2 → DEBUG_VECT('MRA_FINAL')   — final estimated location (relayed to GCS)
+    
+    The Pi 5 gcs_translator.py handles each name differently:
+      MRA_LOITER → stores in telemetry.json as mra_refined_lat/lon only
+      MRA_FINAL  → stores as mra_final_lat/lon AND sets MessageFlag=2 for GCS XBee
+    """
     body = request.get_json(force=True) or {}
     lat = body.get("lat")
     lon = body.get("lon")
     spread_m = body.get("spread_m", 0)
     count = body.get("count", 1)
+    phase = body.get("phase", 2)  # Default to Phase 2 (final) for safety
     
     if lat is None or lon is None:
         return jsonify({"error": "Missing lat/lon"}), 400
@@ -443,11 +453,17 @@ def transmit():
         "lon": lon,
         "spread_m": spread_m,
         "count": count,
+        "phase": phase,
         "timestamp": time.time()
     }
     
     # Write to a known file location so gcs_translator.py can read it
     target_file = Path("/tmp/kraken_gcs_target.json") if os.name != 'nt' else Path(os.environ.get("TEMP", "C:/Temp")) / "kraken_gcs_target.json"
+    
+    # Phase-tagged DEBUG_VECT name (10-char MAVLink limit)
+    # MRA_LOITER = Phase 1 (10 chars), MRA_FINAL = Phase 2 (9 chars)
+    vect_name = b'MRA_LOITER' if phase == 1 else b'MRA_FINAL\x00'
+    phase_label = "Phase 1 (Refined Loiter)" if phase == 1 else "Phase 2 (Final Estimate)"
     
     try:
         # Create parent directory if needed
@@ -462,9 +478,9 @@ def transmit():
         if _mav_upstream and _mav_upstream_ready:
             try:
                 _mav_upstream.mav.debug_vect_send(
-                    b'KRAKEN_TGT', int(time.time() * 1e6), lat, lon, spread_m
+                    vect_name, int(time.time() * 1e6), lat, lon, spread_m
                 )
-                logger.info(f"Target sent UPSTREAM via MAVLink: {lat}, {lon} (spread={spread_m:.1f}m)")
+                logger.info(f"{phase_label} sent UPSTREAM via MAVLink: {lat}, {lon} (spread={spread_m:.1f}m)")
             except Exception as mav_e:
                 logger.error(f"MAVLink upstream transmission failed: {mav_e}")
         elif not PYMAVLINK_AVAILABLE:
@@ -473,7 +489,7 @@ def transmit():
             logger.warning("MAVLink upstream not ready — no packets received from MAVProxy yet. "
                            "Is the GCS Laptop MAVProxy Router running?")
 
-        return jsonify({"status": "ok", "message": "Transmitted successfully"})
+        return jsonify({"status": "ok", "message": f"{phase_label} transmitted successfully"})
     except Exception as e:
         logger.error(f"Failed to export target: {e}")
         return jsonify({"error": str(e)}), 500
@@ -507,6 +523,12 @@ def _translate_fusion_record(payload):
         "bearing_deg": payload["doa_deg"],
         "confidence":  payload.get("confidence_0_1", 0.5),
         "received_at": datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat(timespec='seconds'),
+        # Vehicle attitude — required for heading display and attitude gating
+        "heading_used_deg": payload.get("yaw_deg"),
+        "roll_deg":         payload.get("roll_deg"),
+        "pitch_deg":        payload.get("pitch_deg"),
+        "ground_speed_ft_s": payload.get("ground_speed_ft_s"),
+        "altitude_rel_ft":  payload.get("altitude_rel_ft"),
         "fusion_meta": {
             "kraken_seq": seq,
             "usable": payload.get("usable_for_triangulation", True),

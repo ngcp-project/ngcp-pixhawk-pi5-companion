@@ -50,6 +50,11 @@ const MapView = (() => {
     const DROP_OUTER_RADIUS_M = 45.72;   // 150 ft
     const DROP_INNER_COLOR = '#00e87a';  // Green
     const DROP_OUTER_COLOR = '#ffb84d';  // Amber
+
+    // ERU Patient Location Marker
+    let _eruMarker = null;       // Leaflet marker for ERU patient coordinates
+    let _eruCircle = null;       // Subtle highlight circle around ERU marker
+    const ERU_MARKER_COLOR = '#ff2222';  // Red — distinctive from result (green)
     
     // Masking variables
     let _maskLayer = null;
@@ -1182,11 +1187,73 @@ const MapView = (() => {
     //           visuals.
     function getMap() { return _map; }
 
+    // ── ERU Patient Location Marker ──────────────────────────────
+    // Renders a distinctive red cross marker at the ERU-reported
+    // survivor location. Called from main.js ERU polling callback.
+    function setEruMarker(lat, lon) {
+        if (!_map) return;
+
+        // Remove existing marker if position changed
+        if (_eruMarker) {
+            _eruMarker.remove();
+            _eruMarker = null;
+        }
+        if (_eruCircle) {
+            _eruCircle.remove();
+            _eruCircle = null;
+        }
+
+        // Red cross icon using DivIcon (no image dependency)
+        const eruIcon = L.divIcon({
+            className: 'eru-marker-icon',
+            html: `<div style="
+                width: 20px; height: 20px; position: relative;
+                display: flex; align-items: center; justify-content: center;
+            ">
+                <div style="
+                    position: absolute; width: 4px; height: 18px;
+                    background: ${ERU_MARKER_COLOR}; border-radius: 2px;
+                    box-shadow: 0 0 6px ${ERU_MARKER_COLOR};
+                "></div>
+                <div style="
+                    position: absolute; width: 18px; height: 4px;
+                    background: ${ERU_MARKER_COLOR}; border-radius: 2px;
+                    box-shadow: 0 0 6px ${ERU_MARKER_COLOR};
+                "></div>
+            </div>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10]
+        });
+
+        _eruMarker = L.marker([lat, lon], { icon: eruIcon, zIndexOffset: 1000 })
+            .addTo(_map)
+            .bindTooltip('ERU Patient', {
+                permanent: false, direction: 'top', offset: [0, -12],
+                className: 'eru-tooltip'
+            });
+
+        // Subtle red pulse circle around ERU location
+        _eruCircle = L.circle([lat, lon], {
+            radius: 15,  // meters
+            color: ERU_MARKER_COLOR,
+            fillColor: ERU_MARKER_COLOR,
+            fillOpacity: 0.15,
+            weight: 1,
+            dashArray: '4 4'
+        }).addTo(_map);
+    }
+
+    function clearEruMarker() {
+        if (_eruMarker) { _eruMarker.remove(); _eruMarker = null; }
+        if (_eruCircle) { _eruCircle.remove(); _eruCircle = null; }
+    }
+
     return { 
         init, update, setTile, setLineLength, setShowUncertainty, setShowDropZones, setShowDistLine, getDropZoneRadii, invalidateSize,
         addHeatPoint, clearHeat, setHeatGrid, setHeatRadius, setHeatBlur, setHeatOpacity, getHeatPointCount,
         getMaskGeoJSON, refreshCustomMarkers: _refreshCustomMarkers,
         addGroundTruth, removeGroundTruth, clearGroundTruth, getGroundTruthMarkers,
+        setEruMarker, clearEruMarker,
         getMap,  // [FUTURE] Raw Leaflet map accessor — see comment block above
     };
 })();

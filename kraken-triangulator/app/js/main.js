@@ -375,6 +375,17 @@
                 _estimationHits = [];
                 _redrawEstimationMarkers();
                 _renderEstimationLog();
+
+                // ── Auto-center Prior Box on Phase 1 result ──────────────
+                // When switching TO Phase 2 and Phase 1 has a result,
+                // automatically reposition the Prior Box to focus the
+                // Bayesian solver around the Phase 1 estimated location.
+                if (phase === 2 && _phase1Result) {
+                    _priorLat = _phase1Result.lat;
+                    _priorLon = _phase1Result.lon;
+                    _drawPriorBoxOnMap();
+                    console.log(`[Prior Box] Auto-centered on Phase 1 result: ${_priorLat.toFixed(6)}, ${_priorLon.toFixed(6)}`);
+                }
             }
             _activePhase = phase;
             if (btnPhase1 && btnPhase2) {
@@ -404,8 +415,8 @@
         document.getElementById('btn-phase1-transmit')?.addEventListener('click', () => {
             if (_phase1Result) {
                 console.log(`[Telemetry] TRANSMITTING Phase 1: ${_phase1Result.lat}, ${_phase1Result.lon}`);
-                _transmitToGCS(_phase1Result.lat, _phase1Result.lon, _phase1Result.spreadM, _phase1Result.count)
-                    .then(() => alert(`Phase 1 (Coarse) transmitted:\nLat: ${_phase1Result.lat.toFixed(6)}\nLon: ${_phase1Result.lon.toFixed(6)}\nSpread: ±${_phase1Result.spreadM.toFixed(1)}m`))
+                _transmitToGCS(_phase1Result.lat, _phase1Result.lon, _phase1Result.spreadM, _phase1Result.count, 1)
+                    .then(() => alert(`Phase 1 (Refined Loiter) transmitted:\nLat: ${_phase1Result.lat.toFixed(6)}\nLon: ${_phase1Result.lon.toFixed(6)}\nSpread: ±${_phase1Result.spreadM.toFixed(1)}m\n\nNote: NOT relayed to GCS Dashboard.`))
                     .catch(e => alert(`Transmission failed: ${e}`));
             }
         });
@@ -422,8 +433,8 @@
         document.getElementById('btn-phase2-transmit')?.addEventListener('click', () => {
             if (_phase2Result) {
                 console.log(`[Telemetry] TRANSMITTING Phase 2: ${_phase2Result.lat}, ${_phase2Result.lon}`);
-                _transmitToGCS(_phase2Result.lat, _phase2Result.lon, _phase2Result.spreadM, _phase2Result.count)
-                    .then(() => alert(`Phase 2 (Final) transmitted:\nLat: ${_phase2Result.lat.toFixed(6)}\nLon: ${_phase2Result.lon.toFixed(6)}\nSpread: ±${_phase2Result.spreadM.toFixed(1)}m`))
+                _transmitToGCS(_phase2Result.lat, _phase2Result.lon, _phase2Result.spreadM, _phase2Result.count, 2)
+                    .then(() => alert(`Phase 2 (Final Estimated Location) transmitted:\nLat: ${_phase2Result.lat.toFixed(6)}\nLon: ${_phase2Result.lon.toFixed(6)}\nSpread: ±${_phase2Result.spreadM.toFixed(1)}m\n\nThis location IS relayed to GCS Dashboard.`))
                     .catch(e => alert(`Transmission failed: ${e}`));
             }
         });
@@ -451,6 +462,8 @@
                     document.getElementById('eru-lon').textContent = data.lon.toFixed(6) + '°';
                     const eruDate = new Date(data.received_at * 1000);
                     document.getElementById('eru-time').textContent = eruDate.toLocaleTimeString();
+                    // Draw ERU marker on the GPS map
+                    MapView.setEruMarker(data.lat, data.lon);
                 }
             } catch (e) {
                 // Silently ignore — ERU data is optional
@@ -1318,11 +1331,11 @@
     DataFeed.onData(_processData);
 
     // ── GCS Bridge ─────────────────────────────────────────────────
-    async function _transmitToGCS(lat, lon, spread, count) {
+    async function _transmitToGCS(lat, lon, spread, count, phase) {
         const url = window.location.origin + '/api/transmit';
         const res = await fetch(url, {
             method: 'POST',
-            body: JSON.stringify({ lat, lon, spread_m: spread, count })
+            body: JSON.stringify({ lat, lon, spread_m: spread, count, phase: phase || 2 })
         });
         if (!res.ok) {
             throw new Error(`Server returned ${res.status}`);

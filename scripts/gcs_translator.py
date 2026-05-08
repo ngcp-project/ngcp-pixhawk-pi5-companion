@@ -193,11 +193,36 @@ def main():
                 # ──────────────────────────────────────────────────────────
                 raw_name = getattr(msg, 'name', '')
                 msg_name = (raw_name.decode('utf-8', 'ignore') if isinstance(raw_name, bytes) else str(raw_name)).strip('\x00')
-                if msg_name == 'KRAKEN_TGT':
+                if msg_name == 'MRA_LOITER':
+                    # Phase 1 — Refined Loiter Target
+                    # Store internally for telemetry.json / gcs_bridge.py
+                    # but do NOT set MessageFlag=2 (GCS should not see Phase 1)
+                    telemetry._mra_refined_lat = float(msg.x)
+                    telemetry._mra_refined_lon = float(msg.y)
+                    telemetry._mra_refined_spread = float(msg.z)
+                    telemetry._mra_refined_mtime = time.time()
+                    logger.info(f"MRA Phase 1 (Refined Loiter) received via RFD-900x: ({msg.x}, {msg.y})")
+                elif msg_name == 'MRA_FINAL':
+                    # Phase 2 — Final Estimated Location
+                    # Store AND relay to GCS via MessageFlag=2 + MessageLat/Lon
+                    telemetry._mra_final_lat = float(msg.x)
+                    telemetry._mra_final_lon = float(msg.y)
+                    telemetry._mra_final_spread = float(msg.z)
+                    telemetry._mra_final_mtime = time.time()
                     telemetry.MessageLat = float(msg.x)
                     telemetry.MessageLon = float(msg.y)
                     telemetry._last_target_mtime = time.time()
-                    logger.info(f"Kraken target received via RFD-900x: ({msg.x}, {msg.y})")
+                    logger.info(f"MRA Phase 2 (Final Estimate) received via RFD-900x: ({msg.x}, {msg.y})")
+                elif msg_name == 'KRAKEN_TGT':
+                    # Legacy fallback — treat as Phase 2 for backwards compatibility
+                    telemetry._mra_final_lat = float(msg.x)
+                    telemetry._mra_final_lon = float(msg.y)
+                    telemetry._mra_final_spread = float(msg.z)
+                    telemetry._mra_final_mtime = time.time()
+                    telemetry.MessageLat = float(msg.x)
+                    telemetry.MessageLon = float(msg.y)
+                    telemetry._last_target_mtime = time.time()
+                    logger.info(f"Legacy KRAKEN_TGT received via RFD-900x: ({msg.x}, {msg.y})")
 
         current_time = time.time()
         
@@ -246,11 +271,29 @@ def main():
                             # just acknowledge receipt so GCS knows we are alive.
                             logger.info('Heartbeat received from GCS — connection confirmed.')
                         case _ if cmd_name == 'AddZone':
-                            # TODO: Geofence upload. cmd_obj.ZoneType and
-                            # cmd_obj.Coordinates contain the zone data.
-                            # Wire up MAV_CMD_DO_FENCE_ENABLE or upload via
-                            # MISSION_ITEM_INT with MAV_MISSION_TYPE_FENCE.
-                            logger.info(f'AddZone received (not yet implemented): {cmd_obj}')
+                            # Store zone coordinates for telemetry.json → gcs_bridge.py
+                            # gcs_bridge.py reads 'zones' array and forwards matching
+                            # zone_id to navigation_state.json as 'search_area'.
+                            zone_id = getattr(cmd_obj, 'ZoneID', getattr(cmd_obj, 'zoneID', 0))
+                            zone_type = str(getattr(cmd_obj, 'Zone', getattr(cmd_obj, 'zone', 'unknown')))
+                            raw_coords = getattr(cmd_obj, 'Coordinates', getattr(cmd_obj, 'coordinates', []))
+                            coords = []
+                            for c in raw_coords:
+                                if hasattr(c, '__iter__'):
+                                    pair = list(c)
+                                    if len(pair) >= 2:
+                                        coords.append([float(pair[0]), float(pair[1])])
+                            if not hasattr(telemetry, '_zones'):
+                                telemetry._zones = []
+                            telemetry._zones.append({
+                                "zone_id": zone_id,
+                                "zone_type": zone_type,
+                                "coordinates": coords
+                            })
+                            logger.info(f'AddZone stored: ID={zone_id}, type={zone_type}, {len(coords)} vertices')
+                            # TODO: Upload MAVLink geofence via MISSION_ITEM_INT
+                            # with MAV_MISSION_TYPE_FENCE once MAVLink fence
+                            # integration is finalized.
                         case _ if cmd_name == 'PatientLocation':
                             # ── ERU Patient Coordinate Relay ──────────────────
                             # GCS Station forwards ERU team's survivor location
@@ -310,6 +353,9 @@ def main():
                 logger.info(f'XBee -> Tlm Packet Queued: [{len(payload_bytes)}B] {hex_str}')
                 
                 # Dump state for GUI (this is for UI/Dashboard reference only gui_server.py)
+                # Also consumed by gcs_bridge.py (ngcp-uav-software) which reads
+                # mra_refined_*, mra_final_*, zones, and eru_* fields to update
+                # navigation_state.json for autonomous mission planning.
                 try:
                     state_dump = {
                         "lat": telemetry.CurrentPositionX,
@@ -326,9 +372,22 @@ def main():
                         "message_flag": telemetry.MessageFlag,
                         "target_lat": getattr(telemetry, 'MessageLat', 0.0),
                         "target_lon": getattr(telemetry, 'MessageLon', 0.0),
+                        # MRA Phase 1 — Refined Loiter Target (internal only)
+                        "mra_refined_lat": getattr(telemetry, '_mra_refined_lat', 0.0),
+                        "mra_refined_lon": getattr(telemetry, '_mra_refined_lon', 0.0),
+                        "mra_refined_confidence": getattr(telemetry, '_mra_refined_spread', None),
+                        "mra_refined_fix_id": "mra_refined_001" if getattr(telemetry, '_mra_refined_mtime', 0) > 0 else None,
+                        # MRA Phase 2 — Final Estimated Location (sent to GCS)
+                        "mra_final_lat": getattr(telemetry, '_mra_final_lat', 0.0),
+                        "mra_final_lon": getattr(telemetry, '_mra_final_lon', 0.0),
+                        "mra_final_confidence": getattr(telemetry, '_mra_final_spread', None),
+                        "mra_final_fix_id": "mra_final_001" if getattr(telemetry, '_mra_final_mtime', 0) > 0 else None,
+                        # ERU Patient Location (from GCS PatientLocation command)
                         "eru_lat": getattr(telemetry, '_eru_lat', 0.0),
                         "eru_lon": getattr(telemetry, '_eru_lon', 0.0),
-                        "eru_received_at": getattr(telemetry, '_eru_received_at', 0)
+                        "eru_received_at": getattr(telemetry, '_eru_received_at', 0),
+                        # Search area zones from GCS AddZone commands
+                        "zones": getattr(telemetry, '_zones', []),
                     }
                     with open('/tmp/telemetry.json', 'w') as f:
                         json.dump(state_dump, f)
