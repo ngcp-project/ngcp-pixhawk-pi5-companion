@@ -77,6 +77,14 @@
                 </svg>
                 Replay
             </button>
+            <button class="tab-btn" data-tab="mission" id="tab-mission">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                    <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                    <line x1="12" y1="22.08" x2="12" y2="12"/>
+                </svg>
+                Mission
+            </button>
             <button class="tab-btn" data-tab="settings" id="tab-settings">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="3"/>
@@ -587,6 +595,115 @@
                     </div>
                 </div>
             </div>
+
+            <!-- ── Mission Tab ── -->
+            <div class="tab-panel" id="panel-mission">
+                <div id="mission-container">
+                    <!-- Flight Status Row -->
+                    <div class="mission-section">
+                        <h3 class="mission-section-title">Flight Status</h3>
+                        <div class="mission-status-row">
+                            <div class="status-card" id="card-fc-mode">
+                                <span class="status-label">Flight Mode</span>
+                                <span class="status-value" id="mission-fc-mode">—</span>
+                                <span class="status-dot" id="dot-fc-mode"></span>
+                            </div>
+                            <div class="status-card" id="card-autonomy">
+                                <span class="status-label">Autonomy</span>
+                                <span class="status-value" id="mission-autonomy">—</span>
+                                <span class="status-dot" id="dot-autonomy"></span>
+                            </div>
+                            <div class="status-card" id="card-mission-phase">
+                                <span class="status-label">Mission Phase</span>
+                                <span class="status-value" id="mission-phase">—</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Active Plan -->
+                    <div class="mission-section">
+                        <h3 class="mission-section-title">Active Plan</h3>
+                        <div class="mission-plan-card">
+                            <div class="plan-row">
+                                <span class="plan-label">Plan ID:</span>
+                                <span class="plan-value" id="mission-plan-id">—</span>
+                            </div>
+                            <div class="plan-row">
+                                <span class="plan-label">Status:</span>
+                                <span class="plan-value" id="mission-plan-status">—</span>
+                            </div>
+                            <div class="plan-row">
+                                <span class="plan-label">Waypoint:</span>
+                                <span class="plan-value" id="mission-waypoint">— / —</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Target Locations -->
+                    <div class="mission-section">
+                        <h3 class="mission-section-title">Target Locations</h3>
+                        <div class="target-cards">
+                            <div class="target-card" id="card-mra-refined">
+                                <div class="target-header">
+                                    <span class="target-icon">🔵</span>
+                                    <span class="target-name">MRA Refined Loiter</span>
+                                    <span class="target-phase">Phase 1</span>
+                                </div>
+                                <div class="target-body">
+                                    <span class="target-coords" id="mra-refined-coords">No data</span>
+                                    <span class="target-ack" id="mra-refined-ack">—</span>
+                                </div>
+                            </div>
+                            <div class="target-card" id="card-mra-final">
+                                <div class="target-header">
+                                    <span class="target-icon">🟢</span>
+                                    <span class="target-name">MRA Final Estimate</span>
+                                    <span class="target-phase">Phase 2</span>
+                                </div>
+                                <div class="target-body">
+                                    <span class="target-coords" id="mra-final-coords">No data</span>
+                                    <span class="target-ack" id="mra-final-ack">—</span>
+                                </div>
+                            </div>
+                            <div class="target-card" id="card-eru-patient">
+                                <div class="target-header">
+                                    <span class="target-icon">🔴</span>
+                                    <span class="target-name">ERU Patient</span>
+                                    <span class="target-phase">Drop Target</span>
+                                </div>
+                                <div class="target-body">
+                                    <span class="target-coords" id="eru-coords">No data</span>
+                                    <span class="target-ack" id="eru-status">—</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Search Area -->
+                    <div class="mission-section">
+                        <h3 class="mission-section-title">Search Area</h3>
+                        <div class="mission-plan-card">
+                            <div class="plan-row">
+                                <span class="plan-label">Status:</span>
+                                <span class="plan-value" id="mission-sa-status">Not loaded</span>
+                            </div>
+                            <div class="plan-row">
+                                <span class="plan-label">Vertices:</span>
+                                <span class="plan-value" id="mission-sa-vertices">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Event Log -->
+                    <div class="mission-section">
+                        <h3 class="mission-section-title">Event Log</h3>
+                        <div class="event-log-container" id="mission-event-log">
+                            <div class="event-log-empty">Waiting for downlink messages...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="tab-panel" id="panel-settings">
                 <div id="settings-container">
                     <div class="settings-section">

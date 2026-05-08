@@ -492,6 +492,115 @@
                 // Silently ignore — search area is optional
             }
         }, 10000);
+
+        // ── Mission Info Polling ──────────────────────────────────────
+        // Polls /api/mission_info every 2 seconds and updates the Mission tab
+        // DOM elements with live flight status, plan info, targets, and event log.
+        let _lastMissionHash = '';
+        setInterval(async () => {
+            try {
+                const res = await fetch(window.location.origin + '/api/mission_info');
+                if (!res.ok) return;
+                const info = await res.json();
+
+                // Quick hash to avoid redundant DOM updates
+                const hash = JSON.stringify(info.last_updated);
+                if (hash === _lastMissionHash) return;
+                _lastMissionHash = hash;
+
+                // ── Flight Status Cards ───────────────────────────
+                const ms = info.mission_status || {};
+                const fm = info.flight_mode || {};
+                const auto = info.autonomy || {};
+
+                const fcMode = fm.fc_mode || ms.fc_mode || '—';
+                document.getElementById('mission-fc-mode').textContent = fcMode;
+                const dotFc = document.getElementById('dot-fc-mode');
+                if (dotFc) {
+                    dotFc.className = 'status-dot ' + (fcMode === 'GUIDED' || fcMode === 'AUTO' ? 'active' : fcMode === '—' ? '' : 'warning');
+                }
+
+                const autoActive = auto.autonomy_active ?? ms.autonomy_active;
+                const autoCmd = auto.autonomy_command ?? ms.autonomy_command ?? '—';
+                document.getElementById('mission-autonomy').textContent = autoActive ? 'ACTIVE' : (autoCmd !== '—' ? autoCmd : '—');
+                const dotAuto = document.getElementById('dot-autonomy');
+                if (dotAuto) {
+                    dotAuto.className = 'status-dot ' + (autoActive ? 'active' : '');
+                }
+
+                document.getElementById('mission-phase').textContent = ms.mission_phase || ms.mission_mode || '—';
+
+                // ── Active Plan ───────────────────────────────────
+                const plan = info.active_plan || {};
+                document.getElementById('mission-plan-id').textContent = plan.plan_id || plan.active_plan_id || '—';
+                document.getElementById('mission-plan-status').textContent = plan.status || plan.active_plan_status || '—';
+                const curWP = plan.current_waypoint ?? ms.current_waypoint ?? '—';
+                const totalWP = plan.total_waypoints ?? '—';
+                document.getElementById('mission-waypoint').textContent = `${curWP} / ${totalWP}`;
+
+                // ── Target ACKs ───────────────────────────────────
+                const acks = info.target_acks || [];
+                const refinedAck = acks.find(a => a.target === 'mra_refined_loiter_target');
+                const finalAck = acks.find(a => a.target === 'mra_final_estimated_location');
+
+                const elRefinedAck = document.getElementById('mra-refined-ack');
+                if (refinedAck) {
+                    elRefinedAck.textContent = '✅ ' + (refinedAck.ack || 'received');
+                    elRefinedAck.className = 'target-ack acked';
+                    document.getElementById('card-mra-refined')?.classList.add('has-data');
+                }
+
+                const elFinalAck = document.getElementById('mra-final-ack');
+                if (finalAck) {
+                    elFinalAck.textContent = '✅ ' + (finalAck.ack || 'received');
+                    elFinalAck.className = 'target-ack acked';
+                    document.getElementById('card-mra-final')?.classList.add('has-data');
+                }
+
+                // ── ERU Patient ───────────────────────────────────
+                const eru = info.eru_patient || {};
+                if (eru.lat && eru.lon) {
+                    document.getElementById('eru-coords').textContent =
+                        `${eru.lat.toFixed(6)}, ${eru.lon.toFixed(6)}`;
+                    document.getElementById('eru-status').textContent = '✅ Valid';
+                    document.getElementById('eru-status').className = 'target-ack acked';
+                    document.getElementById('card-eru-patient')?.classList.add('has-data');
+                }
+
+                // ── Search Area ───────────────────────────────────
+                const sa = info.search_area || {};
+                const saCoords = sa.coordinates || [];
+                document.getElementById('mission-sa-status').textContent =
+                    saCoords.length >= 3 ? '✅ Loaded' : 'Not loaded';
+                document.getElementById('mission-sa-vertices').textContent =
+                    saCoords.length >= 3 ? `${saCoords.length} vertices` : '0';
+
+                // ── Event Log ─────────────────────────────────────
+                const log = info.event_log || [];
+                const logEl = document.getElementById('mission-event-log');
+                if (logEl && log.length > 0) {
+                    logEl.innerHTML = log.map(entry => {
+                        const t = entry.time ? new Date(entry.time).toLocaleTimeString('en-US', {hour12: false}) : '??:??:??';
+                        const d = entry.data || {};
+                        let detail = '';
+                        if (entry.type === 'target_ack') detail = `${d.target || ''} → ${d.ack || ''}`;
+                        else if (entry.type === 'mission_status') detail = `mode=${d.fc_mode || '?'} auto=${d.autonomy_active ?? '?'}`;
+                        else if (entry.type === 'flight_mode_event') detail = `${d.fc_mode || '?'}`;
+                        else if (entry.type === 'autonomy_event') detail = `cmd=${d.autonomy_command || '?'} active=${d.autonomy_active ?? '?'}`;
+                        else if (entry.type.includes('plan')) detail = `id=${d.plan_id || '?'} status=${d.status || '?'}`;
+                        else if (entry.type === 'rtl_event') detail = 'RTL triggered';
+                        else detail = JSON.stringify(d).substring(0, 60);
+                        return `<div class="event-log-entry">
+                            <span class="event-time">${t}</span>
+                            <span class="event-type">${entry.type}</span>
+                            <span class="event-detail">${detail}</span>
+                        </div>`;
+                    }).join('');
+                }
+            } catch (e) {
+                // Mission info is optional — don't spam console
+            }
+        }, 2000);
     });
 
     tabButtons.forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));

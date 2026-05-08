@@ -89,6 +89,22 @@ _eru_patient = {"lat": 0.0, "lon": 0.0, "received_at": 0}
 _search_area_lock = threading.Lock()
 _search_area = {"coordinates": [], "updated_at": 0}
 
+# ── Mission Info State ────────────────────────────────────────────────────────
+# Aggregated from mra_info_receiver downlink messages (mission_status,
+# active_plan, flight_mode, autonomy, target_ack, rtl).
+_mission_lock = threading.Lock()
+_mission_info = {
+    "mission_status": {},
+    "active_plan": {},
+    "flight_mode": {},
+    "autonomy": {},
+    "target_acks": [],
+    "rtl": None,
+    "last_updated": 0,
+}
+_event_log = []  # Most recent first, capped at 100 entries
+MAX_EVENT_LOG = 100
+
 # ── Replay / Playback State ──────────────────────────────────────────────────
 # These must be initialized at module level so that _advance_waypoint() and
 # _build_response() don't crash with NameError when /api/bearings is called
@@ -533,6 +549,21 @@ def search_area_endpoint():
         with _search_area_lock:
             return jsonify(_search_area)
 
+@app.route("/api/mission_info", methods=["GET"])
+def get_mission_info():
+    """Returns aggregated mission data from the mra_info_sender pipeline.
+    Includes: mission_status, active_plan, flight_mode, autonomy,
+    target_acks, rtl, and recent event log entries."""
+    with _mission_lock:
+        result = dict(_mission_info)
+        result["event_log"] = list(_event_log[:50])  # Latest 50 events
+    # Also include ERU and search area for the Mission tab
+    with _eru_lock:
+        result["eru_patient"] = dict(_eru_patient)
+    with _search_area_lock:
+        result["search_area"] = dict(_search_area)
+    return jsonify(result)
+
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
 def _translate_fusion_record(payload):
@@ -540,8 +571,10 @@ def _translate_fusion_record(payload):
     if "kraken_seq" not in payload:
         return payload
 
-    if not payload.get("usable_for_triangulation", True):
-        return None
+    # NOTE: Do NOT filter on usable_for_triangulation here.
+    # Even unusable records carry the UAV position (lat/lon) which the operator
+    # needs to see on the GPS map. The frontend's confidence filter handles
+    # visual dimming; we tag usable:false in fusion_meta below.
 
     seq = payload["kraken_seq"]
     ts_ms = payload.get("t_gcs_rx_ms", int(time.time() * 1000))
@@ -617,16 +650,58 @@ def udp_listener_thread():
                         logger.info(f"ERU location received via downlink: ({eru_lat}, {eru_lon})")
 
                 elif msg_type == "target_ack":
-                    # Log target acknowledgements for operator awareness
+                    # Store target acknowledgement
                     target = inner.get("target", "unknown")
                     ack = inner.get("ack", "unknown")
+                    with _mission_lock:
+                        # Update or append to target_acks list
+                        existing = [t for t in _mission_info["target_acks"] if t.get("target") != target]
+                        existing.append(inner)
+                        _mission_info["target_acks"] = existing
+                        _mission_info["last_updated"] = time.time()
+                        _event_log.insert(0, {"type": msg_type, "data": inner, "time": _now_iso()})
+                        _event_log[:] = _event_log[:MAX_EVENT_LOG]
                     logger.info(f"Target ACK received: {target} → {ack}")
 
-                elif msg_type in ("mission_status", "active_plan_summary",
-                                  "active_plan_full", "flight_mode_event",
-                                  "autonomy_event", "rtl_event"):
-                    # Informational — log for now, future UI tabs can consume
-                    logger.info(f"Downlink message: type={msg_type}")
+                elif msg_type == "mission_status":
+                    with _mission_lock:
+                        _mission_info["mission_status"] = inner
+                        _mission_info["last_updated"] = time.time()
+                        _event_log.insert(0, {"type": msg_type, "data": inner, "time": _now_iso()})
+                        _event_log[:] = _event_log[:MAX_EVENT_LOG]
+                    logger.info(f"Mission status: mode={inner.get('fc_mode')} auto={inner.get('autonomy_active')}")
+
+                elif msg_type in ("active_plan_summary", "active_plan_full"):
+                    with _mission_lock:
+                        _mission_info["active_plan"] = inner
+                        _mission_info["last_updated"] = time.time()
+                        _event_log.insert(0, {"type": msg_type, "data": inner, "time": _now_iso()})
+                        _event_log[:] = _event_log[:MAX_EVENT_LOG]
+                    logger.info(f"Active plan: id={inner.get('plan_id')} status={inner.get('status')}")
+
+                elif msg_type == "flight_mode_event":
+                    with _mission_lock:
+                        _mission_info["flight_mode"] = inner
+                        _mission_info["last_updated"] = time.time()
+                        _event_log.insert(0, {"type": msg_type, "data": inner, "time": _now_iso()})
+                        _event_log[:] = _event_log[:MAX_EVENT_LOG]
+                    logger.info(f"Flight mode: {inner.get('fc_mode')}")
+
+                elif msg_type == "autonomy_event":
+                    with _mission_lock:
+                        _mission_info["autonomy"] = inner
+                        _mission_info["last_updated"] = time.time()
+                        _event_log.insert(0, {"type": msg_type, "data": inner, "time": _now_iso()})
+                        _event_log[:] = _event_log[:MAX_EVENT_LOG]
+                    logger.info(f"Autonomy: cmd={inner.get('autonomy_command')} active={inner.get('autonomy_active')}")
+
+                elif msg_type == "rtl_event":
+                    with _mission_lock:
+                        _mission_info["rtl"] = inner
+                        _mission_info["last_updated"] = time.time()
+                        _event_log.insert(0, {"type": msg_type, "data": inner, "time": _now_iso()})
+                        _event_log[:] = _event_log[:MAX_EVENT_LOG]
+                    logger.info(f"RTL event received")
 
                 else:
                     logger.debug(f"Unknown downlink type: {msg_type}")
