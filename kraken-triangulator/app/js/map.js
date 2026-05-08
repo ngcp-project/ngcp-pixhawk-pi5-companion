@@ -1028,6 +1028,13 @@ const MapView = (() => {
             _distLineLayer.addLayer(L.marker([midLat, midLon], { icon: distIcon, interactive: false }));
         }
 
+        // ── Distance Line: UAV → ERU Patient Location ───────────────
+        // If an ERU marker is active, also draw a distance line to it.
+        // Uses the same UAV current position (not just the triangulation result).
+        if (_showDistLine && current && _eruMarker) {
+            updateEruDistanceLine(current.lat, current.lon);
+        }
+
         // Only snap to the bounds on the very first load to allow user complete zoom/pan freedom.
         if (bounds.length > 1 && _firstLoad) {
             _map.fitBounds(bounds, { padding: [40, 40], maxZoom: 17 });
@@ -1232,20 +1239,21 @@ const MapView = (() => {
     }
 
     // ── ERU Patient Location Marker ──────────────────────────────
-    // Renders a distinctive red cross marker at the ERU-reported
-    // survivor location. Called from main.js ERU polling callback.
+    // Renders a red cross marker at the ERU-reported survivor location
+    // with full payload-drop treatment: 100ft/150ft drop zone circles
+    // and distance line from the UAV's current position.
+    let _eruDropInner = null;
+    let _eruDropOuter = null;
+    let _eruDistLayer = null;
+
     function setEruMarker(lat, lon) {
         if (!_map) return;
 
-        // Remove existing marker if position changed
-        if (_eruMarker) {
-            _eruMarker.remove();
-            _eruMarker = null;
-        }
-        if (_eruCircle) {
-            _eruCircle.remove();
-            _eruCircle = null;
-        }
+        // Remove existing layers
+        if (_eruMarker) { _eruMarker.remove(); _eruMarker = null; }
+        if (_eruCircle) { _eruCircle.remove(); _eruCircle = null; }
+        if (_eruDropInner) { _eruDropInner.remove(); _eruDropInner = null; }
+        if (_eruDropOuter) { _eruDropOuter.remove(); _eruDropOuter = null; }
 
         // Red cross icon using DivIcon (no image dependency)
         const eruIcon = L.divIcon({
@@ -1271,25 +1279,105 @@ const MapView = (() => {
 
         _eruMarker = L.marker([lat, lon], { icon: eruIcon, zIndexOffset: 1000 })
             .addTo(_map)
-            .bindTooltip('ERU Patient', {
+            .bindPopup(`
+                <div style="min-width: 160px;">
+                    <div class="marker-popup-title" style="color: ${ERU_MARKER_COLOR};">ERU Patient</div>
+                    <div class="marker-popup-coords">
+                        ${lat.toFixed(6)}, ${lon.toFixed(6)}
+                    </div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); text-align: center; margin-top: 8px;">
+                        Payload Drop Target
+                    </div>
+                </div>
+            `)
+            .bindTooltip('ERU Patient — Drop Target', {
                 permanent: false, direction: 'top', offset: [0, -12],
                 className: 'eru-tooltip'
             });
 
-        // Subtle red pulse circle around ERU location
+        // Subtle red pulse circle
         _eruCircle = L.circle([lat, lon], {
-            radius: 15,  // meters
+            radius: 15,
             color: ERU_MARKER_COLOR,
             fillColor: ERU_MARKER_COLOR,
             fillOpacity: 0.15,
             weight: 1,
             dashArray: '4 4'
         }).addTo(_map);
+
+        // Drop zone circles — same 100ft / 150ft as triangulation result
+        if (_showDropZones) {
+            _eruDropInner = L.circle([lat, lon], {
+                radius: DROP_INNER_RADIUS_M,
+                color: DROP_INNER_COLOR,
+                weight: 2,
+                fillColor: DROP_INNER_COLOR,
+                fillOpacity: 0.06,
+                dashArray: null,
+            }).addTo(_map);
+            _eruDropOuter = L.circle([lat, lon], {
+                radius: DROP_OUTER_RADIUS_M,
+                color: DROP_OUTER_COLOR,
+                weight: 1.5,
+                fillColor: DROP_OUTER_COLOR,
+                fillOpacity: 0.03,
+                dashArray: '6 4',
+            }).addTo(_map);
+        }
+    }
+
+    /**
+     * Update distance line from UAV to ERU target.
+     * Called from the update() loop when both UAV position and ERU marker exist.
+     * @param {number} uavLat - Current UAV latitude
+     * @param {number} uavLon - Current UAV longitude
+     */
+    function updateEruDistanceLine(uavLat, uavLon) {
+        if (!_map || !_eruMarker) return;
+        if (!_eruDistLayer) { _eruDistLayer = L.layerGroup().addTo(_map); }
+        _eruDistLayer.clearLayers();
+
+        const eruLatLng = _eruMarker.getLatLng();
+        const distM = _approxDistanceMeters(uavLat, uavLon, eruLatLng.lat, eruLatLng.lng);
+
+        // Dashed red/white line from UAV to ERU
+        _eruDistLayer.addLayer(L.polyline(
+            [[uavLat, uavLon], [eruLatLng.lat, eruLatLng.lng]],
+            { color: '#ff6666', weight: 2, opacity: 0.5, dashArray: '8, 6' }
+        ));
+
+        // Midpoint distance label
+        const midLat = (uavLat + eruLatLng.lat) / 2;
+        const midLon = (uavLon + eruLatLng.lng) / 2;
+        const isImp = document.getElementById('setting-units')?.value === 'imperial';
+        let label;
+        if (isImp) {
+            const ft = distM * 3.28084;
+            label = ft >= 5280 ? `${(ft / 5280).toFixed(2)} mi` : `${ft.toFixed(0)} ft`;
+        } else {
+            label = distM >= 1000 ? `${(distM / 1000).toFixed(2)} km` : `${distM.toFixed(0)} m`;
+        }
+
+        const distIcon = L.divIcon({
+            className: '',
+            html: `<div style="
+                background: rgba(80,0,0,0.8); color: #ff9999; font-size: 11px;
+                font-family: 'JetBrains Mono', 'Fira Code', monospace;
+                padding: 2px 6px; border-radius: 4px; white-space: nowrap;
+                border: 1px solid rgba(255,100,100,0.4);
+            ">ERU: ${label}</div>`,
+            iconSize: [0, 0],
+            iconAnchor: [0, -8],
+        });
+        _eruDistLayer.addLayer(L.marker([midLat, midLon], { icon: distIcon, interactive: false }));
     }
 
     function clearEruMarker() {
         if (_eruMarker) { _eruMarker.remove(); _eruMarker = null; }
         if (_eruCircle) { _eruCircle.remove(); _eruCircle = null; }
+        if (_eruDropInner) { _eruDropInner.remove(); _eruDropInner = null; }
+        if (_eruDropOuter) { _eruDropOuter.remove(); _eruDropOuter = null; }
+        if (_eruDistLayer) { _eruDistLayer.clearLayers(); }
     }
 
     return { 
@@ -1297,7 +1385,7 @@ const MapView = (() => {
         addHeatPoint, clearHeat, setHeatGrid, setHeatRadius, setHeatBlur, setHeatOpacity, getHeatPointCount,
         getMaskGeoJSON, refreshCustomMarkers: _refreshCustomMarkers,
         addGroundTruth, removeGroundTruth, clearGroundTruth, getGroundTruthMarkers,
-        setEruMarker, clearEruMarker,
+        setEruMarker, clearEruMarker, updateEruDistanceLine,
         setSearchArea, clearSearchArea,
         getMap,  // [FUTURE] Raw Leaflet map accessor — see comment block above
     };

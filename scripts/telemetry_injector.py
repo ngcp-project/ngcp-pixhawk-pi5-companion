@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-telemetry_injector.py — GCS Simulator for Pi 5 Testing
+telemetry_injector.py — GCS Simulator for MRA Laptop
 
-Writes search area polygons, ERU patient coordinates, and MRA target
-locations directly to /tmp/telemetry.json, bypassing the XBee/GCS pipeline.
-This lets gcs_bridge.py populate navigation_state.json for autonomous
-mission testing without needing the GCS laptop or XBee radios.
+Sends search area polygons, ERU patient coordinates, and MRA target
+locations through the RFD-900x radio link (via MAVProxy) to the Pi 5.
+The Pi 5's gcs_translator.py receives the messages and writes them to
+/tmp/telemetry.json, which gcs_bridge.py then reads into navigation_state.json.
+
+This tool runs on the MRA laptop and uses the same MAVProxy router that
+kraken_server.py connects to.
 
 Usage:
   # Inject default CPP search area + ERU location
-  python3 telemetry_injector.py
+  python3 telemetry_injector.py --all
 
   # Inject only search area
   python3 telemetry_injector.py --search-area
@@ -26,132 +29,151 @@ Usage:
   # Inject everything (full Demo Day simulation)
   python3 telemetry_injector.py --all
 
-  # Run in continuous mode (re-injects every N seconds to survive translator restarts)
-  python3 telemetry_injector.py --all --loop 5
+  # Use a custom MAVProxy endpoint
+  python3 telemetry_injector.py --all --mavlink udp:127.0.0.1:14555
 
-Notes:
-  - This script MERGES into the existing /tmp/telemetry.json — it does NOT
-    overwrite vehicle telemetry (lat/lon/alt/battery) written by gcs_translator.py.
-  - gcs_bridge.py polls telemetry.json every 200ms, so changes propagate
-    to navigation_state.json within ~1 second.
-  - Safe to run while gcs_translator.py is active — both do atomic writes.
+Data Flow:
+  MRA Laptop (this script) → MAVProxy Router → RFD-900x radio
+  → Pi 5 MAVProxy → gcs_translator.py → /tmp/telemetry.json
+  → gcs_bridge.py → navigation_state.json
+
+Protocol:
+  - ERU/MRA targets use DEBUG_VECT messages (same as kraken_server.py)
+  - Search area uses STATUSTEXT chunked JSON (same as fusion_sender.py)
 """
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
-from pathlib import Path
 
-TELEMETRY_PATH = Path('/tmp/telemetry.json')
+try:
+    from pymavlink import mavutil
+except ImportError:
+    print("[injector] ERROR: pymavlink not installed.")
+    print("[injector] Install with: pip install pymavlink")
+    sys.exit(1)
 
 # ── Default CPP Competition Search Area ─────────────────────────────────
 # 6-vertex polygon around the Cal Poly Pomona competition field.
-# gcs_bridge.py looks for zone_id == 1 to populate search_area in nav_state.
-DEFAULT_SEARCH_AREA_ZONES = [
-    {
-        "zone_id": 1,
-        "zone_type": "SearchArea",
-        "coordinates": [
-            [34.044485, -117.814538],
-            [34.042812, -117.812002],
-            [34.040978, -117.813997],
-            [34.039158, -117.815556],
-            [34.040610, -117.817737],
-            [34.042604, -117.816364],
-        ]
-    }
+# gcs_translator.py collects STATUSTEXT 'SA:' chunks and rebuilds the zone.
+DEFAULT_SEARCH_AREA = [
+    [34.044485, -117.814538],
+    [34.042812, -117.812002],
+    [34.040978, -117.813997],
+    [34.039158, -117.815556],
+    [34.040610, -117.817737],
+    [34.042604, -117.816364],
 ]
 
-# ── Default ERU Patient Location ─────────────────────────────────────────
+# ── Default ERU Patient Location ────────────────────────────────────────
 DEFAULT_ERU_LAT = 34.043391
 DEFAULT_ERU_LON = -117.814410
 
-
-def read_existing():
-    """Read existing telemetry.json, or return empty dict."""
-    if not TELEMETRY_PATH.exists():
-        return {}
-    try:
-        return json.loads(TELEMETRY_PATH.read_text())
-    except Exception:
-        return {}
+# ── MAVLink Connection ──────────────────────────────────────────────────
+DEFAULT_MAVLINK_URI = 'udp:127.0.0.1:14555'  # MRA laptop MAVProxy router
 
 
-def atomic_write(data: dict):
-    """Write JSON atomically (same pattern as nav_state_utils)."""
-    tmp = TELEMETRY_PATH.with_name(f'{TELEMETRY_PATH.name}.{os.getpid()}.tmp')
-    try:
-        tmp.write_text(json.dumps(data, indent=None))
-        os.replace(tmp, TELEMETRY_PATH)
-    finally:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+def send_eru(mav, lat, lon):
+    """Send ERU patient location as DEBUG_VECT('ERU_TGT').
+    Pi 5's gcs_translator.py already handles this message name."""
+    mav.mav.debug_vect_send(
+        b'ERU_TGT',
+        int(time.time() * 1e6),
+        lat, lon, 0.0
+    )
+    print(f'[injector] Sent ERU_TGT: ({lat}, {lon})')
 
 
-def inject(args):
-    """Merge requested fields into telemetry.json."""
-    data = read_existing()
-    changes = []
+def send_mra_refined(mav, lat, lon, spread_m=50.0):
+    """Send MRA Phase 1 refined loiter target as DEBUG_VECT('MRA_LOITER')."""
+    mav.mav.debug_vect_send(
+        b'MRA_LOITER',
+        int(time.time() * 1e6),
+        lat, lon, spread_m
+    )
+    print(f'[injector] Sent MRA_LOITER: ({lat}, {lon}), spread={spread_m}m')
 
-    # Search area zones
-    if args.search_area or args.all:
-        data['zones'] = DEFAULT_SEARCH_AREA_ZONES
-        n = len(DEFAULT_SEARCH_AREA_ZONES[0]['coordinates'])
-        changes.append(f'search area ({n} vertices)')
 
-    # ERU patient location
-    if args.eru or args.all:
-        if args.eru and len(args.eru) == 2:
-            lat, lon = args.eru
-        else:
-            lat, lon = DEFAULT_ERU_LAT, DEFAULT_ERU_LON
-        data['eru_lat'] = float(lat)
-        data['eru_lon'] = float(lon)
-        data['eru_received_at'] = time.time()
-        data['eru_fix_id'] = 'eru_injected'
-        changes.append(f'ERU ({lat}, {lon})')
+def send_mra_final(mav, lat, lon, spread_m=20.0):
+    """Send MRA Phase 2 final estimated location as DEBUG_VECT('MRA_FINAL')."""
+    mav.mav.debug_vect_send(
+        b'MRA_FINAL',
+        int(time.time() * 1e6),
+        lat, lon, spread_m
+    )
+    print(f'[injector] Sent MRA_FINAL: ({lat}, {lon}), spread={spread_m}m')
 
-    # MRA Phase 1 refined loiter target
-    if args.mra_refined:
-        lat, lon = args.mra_refined
-        data['mra_refined_lat'] = float(lat)
-        data['mra_refined_lon'] = float(lon)
-        data['mra_refined_confidence'] = 50.0  # 50m spread (simulated)
-        data['mra_refined_fix_id'] = 'mra_refined_injected'
-        changes.append(f'MRA refined ({lat}, {lon})')
 
-    # MRA Phase 2 final estimated location
-    if args.mra_final:
-        lat, lon = args.mra_final
-        data['mra_final_lat'] = float(lat)
-        data['mra_final_lon'] = float(lon)
-        data['mra_final_confidence'] = 20.0  # 20m spread (simulated)
-        data['mra_final_fix_id'] = 'mra_final_injected'
-        changes.append(f'MRA final ({lat}, {lon})')
+def send_search_area(mav, coordinates):
+    """Send search area as chunked STATUSTEXT messages.
+    
+    Protocol: STATUSTEXT with severity INFO, text starting with 'SA:'
+    followed by JSON chunks. gcs_translator.py on Pi 5 reassembles them.
+    
+    Format: SA{seq:02d}{chunk:02d}{total:02d}:{json_payload}
+    """
+    payload = json.dumps({
+        "zone_id": 1,
+        "zone_type": "SearchArea",
+        "coordinates": coordinates
+    }, separators=(',', ':'))
+    
+    chunk_size = 40  # 50 - 10 header chars
+    chunks = [payload[i:i+chunk_size] for i in range(0, len(payload), chunk_size)]
+    total = len(chunks)
+    seq = int(time.time()) % 100
+    
+    print(f'[injector] Sending search area ({len(coordinates)} vertices, {total} chunks)...')
+    
+    for idx, chunk in enumerate(chunks):
+        text = f"SA{seq:02d}{idx:02d}{total:02d}:{chunk}"
+        mav.mav.statustext_send(
+            mavutil.mavlink.MAV_SEVERITY_INFO,
+            text.encode().ljust(50, b'\x00')
+        )
+        time.sleep(0.05)  # Small gap between chunks for reliable delivery
+    
+    print(f'[injector] Search area sent: {total} STATUSTEXT chunks')
 
-    if not changes:
-        print('[injector] No fields selected. Use --help for options.')
-        print('[injector] Quick start: python3 telemetry_injector.py --all')
-        return False
 
-    atomic_write(data)
-    print(f'[injector] Wrote to {TELEMETRY_PATH}: {", ".join(changes)}')
-    return True
+def send_search_area_debug_vect(mav, coordinates):
+    """Fallback: Send search area vertices as individual DEBUG_VECT messages.
+    
+    Uses message name 'SA_VERT' with:
+      x = latitude, y = longitude, z = vertex_index (0-based)
+    
+    Pi 5's gcs_translator.py collects these to build the zone polygon.
+    A final 'SA_DONE' message signals end of transmission.
+    """
+    print(f'[injector] Sending search area via DEBUG_VECT ({len(coordinates)} vertices)...')
+    
+    for i, coord in enumerate(coordinates):
+        mav.mav.debug_vect_send(
+            b'SA_VERT',
+            int(time.time() * 1e6),
+            coord[0], coord[1], float(i)
+        )
+        time.sleep(0.05)
+    
+    # Signal end of vertex list
+    mav.mav.debug_vect_send(
+        b'SA_DONE',
+        int(time.time() * 1e6),
+        float(len(coordinates)), 0.0, 0.0
+    )
+    print(f'[injector] Search area complete: {len(coordinates)} vertices sent')
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='GCS Simulator — inject test data into /tmp/telemetry.json',
+        description='GCS Simulator — inject test data via RFD-900x radio',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__
     )
     parser.add_argument('--search-area', action='store_true',
-                        help='Inject default CPP search area polygon (zone_id=1)')
+                        help='Inject default CPP search area polygon')
     parser.add_argument('--eru', nargs='*', type=float, metavar=('LAT', 'LON'),
                         help='Inject ERU patient location (default: CPP field center)')
     parser.add_argument('--mra-refined', nargs=2, type=float, metavar=('LAT', 'LON'),
@@ -160,8 +182,12 @@ def main():
                         help='Inject MRA Phase 2 final estimated location')
     parser.add_argument('--all', action='store_true',
                         help='Inject search area + ERU (full Demo Day sim)')
+    parser.add_argument('--mavlink', type=str, default=DEFAULT_MAVLINK_URI,
+                        help=f'MAVLink endpoint (default: {DEFAULT_MAVLINK_URI})')
     parser.add_argument('--loop', type=int, default=0, metavar='SECONDS',
-                        help='Re-inject every N seconds (survives translator restarts)')
+                        help='Re-inject every N seconds (continuous mode)')
+    parser.add_argument('--use-statustext', action='store_true',
+                        help='Use STATUSTEXT chunking for search area (instead of DEBUG_VECT)')
 
     args = parser.parse_args()
 
@@ -172,14 +198,42 @@ def main():
         print('\n[injector] Example: python3 telemetry_injector.py --all')
         sys.exit(0)
 
+    # Connect to MAVProxy
+    print(f'[injector] Connecting to MAVProxy at {args.mavlink}...')
+    mav = mavutil.mavlink_connection(args.mavlink, source_system=254, source_component=1)
+    print(f'[injector] Connected. Sending data via RFD-900x...')
+
+    def do_inject():
+        if args.search_area or args.all:
+            if args.use_statustext:
+                send_search_area(mav, DEFAULT_SEARCH_AREA)
+            else:
+                send_search_area_debug_vect(mav, DEFAULT_SEARCH_AREA)
+
+        if args.eru is not None or args.all:
+            if args.eru and len(args.eru) == 2:
+                lat, lon = args.eru
+            else:
+                lat, lon = DEFAULT_ERU_LAT, DEFAULT_ERU_LON
+            send_eru(mav, lat, lon)
+
+        if args.mra_refined:
+            send_mra_refined(mav, args.mra_refined[0], args.mra_refined[1])
+
+        if args.mra_final:
+            send_mra_final(mav, args.mra_final[0], args.mra_final[1])
+
     if args.loop > 0:
         print(f'[injector] Continuous mode — re-injecting every {args.loop}s. Ctrl+C to stop.')
-        while True:
-            inject(args)
-            time.sleep(args.loop)
+        try:
+            while True:
+                do_inject()
+                time.sleep(args.loop)
+        except KeyboardInterrupt:
+            print('\n[injector] Stopped.')
     else:
-        inject(args)
-        print('[injector] Done. gcs_bridge.py should pick this up within ~1 second.')
+        do_inject()
+        print('[injector] Done. Pi 5 should update within ~1 second.')
 
 
 if __name__ == '__main__':

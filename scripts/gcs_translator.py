@@ -223,6 +223,38 @@ def main():
                     telemetry.MessageLon = float(msg.y)
                     telemetry._last_target_mtime = time.time()
                     logger.info(f"Legacy KRAKEN_TGT received via RFD-900x: ({msg.x}, {msg.y})")
+                elif msg_name == 'ERU_TGT':
+                    # ERU patient location injected from MRA laptop
+                    telemetry._eru_lat = float(msg.x)
+                    telemetry._eru_lon = float(msg.y)
+                    telemetry._eru_received_at = time.time()
+                    logger.info(f"ERU_TGT received via RFD-900x: ({msg.x}, {msg.y})")
+                elif msg_name == 'SA_VERT':
+                    # Search area vertex from telemetry_injector.py
+                    # x=lat, y=lon, z=vertex_index (0-based)
+                    if not hasattr(telemetry, '_sa_pending_verts'):
+                        telemetry._sa_pending_verts = []
+                    idx = int(msg.z)
+                    telemetry._sa_pending_verts.append([float(msg.x), float(msg.y)])
+                    logger.info(f"SA_VERT[{idx}] received: ({msg.x}, {msg.y})")
+                elif msg_name == 'SA_DONE':
+                    # Search area transmission complete — finalize the zone
+                    verts = getattr(telemetry, '_sa_pending_verts', [])
+                    expected = int(msg.x)
+                    if len(verts) >= 3:
+                        if not hasattr(telemetry, '_zones'):
+                            telemetry._zones = []
+                        # Replace existing zone_id=1 or append
+                        telemetry._zones = [z for z in telemetry._zones if z.get('zone_id') != 1]
+                        telemetry._zones.append({
+                            'zone_id': 1,
+                            'zone_type': 'SearchArea',
+                            'coordinates': verts
+                        })
+                        logger.info(f"Search area finalized: {len(verts)} vertices (expected {expected})")
+                    else:
+                        logger.warning(f"SA_DONE received but only {len(verts)} vertices (need ≥3)")
+                    telemetry._sa_pending_verts = []
 
         current_time = time.time()
         
