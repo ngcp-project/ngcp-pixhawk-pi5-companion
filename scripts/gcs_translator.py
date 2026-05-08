@@ -386,6 +386,7 @@ def main():
                         "eru_lat": getattr(telemetry, '_eru_lat', 0.0),
                         "eru_lon": getattr(telemetry, '_eru_lon', 0.0),
                         "eru_received_at": getattr(telemetry, '_eru_received_at', 0),
+                        "eru_fix_id": "eru_001" if getattr(telemetry, '_eru_received_at', 0) > 0 else None,
                         # Search area zones from GCS AddZone commands
                         "zones": getattr(telemetry, '_zones', []),
                     }
