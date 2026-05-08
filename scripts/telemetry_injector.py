@@ -199,9 +199,14 @@ def main():
         sys.exit(0)
 
     # Connect to MAVProxy
+    # For UDP input connections, pymavlink must receive at least one packet
+    # before it knows the return address to send to. wait_heartbeat() blocks
+    # until MAVProxy sends a heartbeat, establishing the bidirectional link.
     print(f'[injector] Connecting to MAVProxy at {args.mavlink}...')
     mav = mavutil.mavlink_connection(args.mavlink, source_system=254, source_component=1)
-    print(f'[injector] Connected. Sending data via RFD-900x...')
+    print(f'[injector] Waiting for heartbeat from MAVProxy (proves RFD-900x link is live)...')
+    mav.wait_heartbeat(timeout=30)
+    print(f'[injector] Heartbeat received (system {mav.target_system}). RFD-900x link active.')
 
     def do_inject():
         if args.search_area or args.all:

@@ -15,7 +15,7 @@ BAUD_RATE = 57600
 # 14550: QGroundControl (Default)
 # 14551: Kraken Triangulator / Custom Python scripts
 # 14601: Software Team Pipeline
-UDP_OUT_PORTS = [14550, 14551, 14601]
+UDP_OUT_PORTS = [14550, 14551, 14601, 14555]
 
 def find_rfd900_com_port():
     print("Scanning for connected USB Serial Devices (RFD-900x)...")
