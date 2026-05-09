@@ -530,6 +530,20 @@
 
                 document.getElementById('mission-phase').textContent = ms.mission_phase || ms.mission_mode || '—';
 
+                // ── KrakenSDR Status ──────────────────────────────
+                const krakenStatus = ms.kraken_status || '—';
+                const krakenEl = document.getElementById('mission-kraken-status');
+                if (krakenEl) {
+                    krakenEl.textContent = krakenStatus.charAt(0).toUpperCase() + krakenStatus.slice(1);
+                }
+                const dotKraken = document.getElementById('dot-kraken-status');
+                if (dotKraken) {
+                    const kClass = krakenStatus === 'connected' ? 'active'
+                                 : krakenStatus === 'calibrating' ? 'warning'
+                                 : krakenStatus === 'disconnected' ? 'error' : '';
+                    dotKraken.className = 'status-dot ' + kClass;
+                }
+
                 // ── Active Plan ───────────────────────────────────
                 const plan = info.active_plan || {};
                 document.getElementById('mission-plan-id').textContent = plan.plan_id || plan.active_plan_id || '—';
