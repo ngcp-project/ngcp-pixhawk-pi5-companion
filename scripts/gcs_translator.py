@@ -310,10 +310,13 @@ def main():
 
                             
                         case _ if cmd_name == 'PatientLocation':
-                            # TODO: GCS-pushed patient coordinate. cmd_obj.Coordinate
-                            # contains the (lat, lon) tuple. Forward to autopilot
-                            # or store for Kraken overlay.
-                            logger.info(f'PatientLocation received (not yet implemented): {cmd_obj}')
+                            # GCS-pushed patient coordinate. Store in telemetry for transmission to GCS.
+                            lat, lon = cmd_obj.Coordinates
+                            telemetry.MessageLat = lat
+                            telemetry.MessageLon = lon
+                            telemetry.MessageFlag = 2  # 2 = Patient per GCS Telemetry spec
+                            telemetry._last_target_mtime = time.time()  # Set timestamp like Kraken
+                            logger.info(f'Patient location set from GCS: ({lat}, {lon})')
                         case _:
                             logger.warning(f'Unrecognised command type — no action taken: {cmd_name}')
         except Exception as e:
