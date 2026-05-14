@@ -56,16 +56,15 @@ except ImportError:
     print("[injector] Install with: pip install pymavlink")
     sys.exit(1)
 
-# ── Default CPP Competition Search Area ─────────────────────────────────
-# 6-vertex polygon around the Cal Poly Pomona competition field.
+# ── Default MRA Search Area (Light Blue) ────────────────────────────────
+# 5-vertex polygon — MRA search zone.
 # gcs_translator.py collects STATUSTEXT 'SA:' chunks and rebuilds the zone.
 DEFAULT_SEARCH_AREA = [
-    [34.044485, -117.814538],
-    [34.042812, -117.812002],
-    [34.040978, -117.813997],
-    [34.039158, -117.815556],
-    [34.040610, -117.817737],
-    [34.042604, -117.816364],
+    [33.93559832653503, -117.6333218534539],
+    [33.935473707597936, -117.62444041774788],
+    [33.93257181506588, -117.62892011277968],
+    [33.93245829041332, -117.63076681921322],
+    [33.93185967908806, -117.63242083823737],
 ]
 
 # ── Default ERU Patient Location ────────────────────────────────────────

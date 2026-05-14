@@ -6,7 +6,7 @@ This repository contains the **flight-side telemetry pipeline** for the NGCP Mul
 
 MRA is a **read-only consumer** of the `gcs-infrastructure` library (owned by the GCS Subteam). This repo does not modify that library; it consumes its public API (`InfrastructureInterface`) to transmit telemetry and receive commands.
 
-> Scripts and workflow are tailored for CPP NGCP MRA. MEA teams may use this repo as a reference template but should adapt it for their own hardware configuration.
+> **For other NGCP vehicle teams (e.g. CPSLO MEA):** The core telemetry pipeline (MAVProxy → `gcs_translator.py` → XBee) is vehicle-agnostic and reusable. Components marked **MRA-Only** below (Kraken Triangulator, `telemetry_injector.py`, RF search tools) are specific to the MRA mission and can be ignored.
 
 ---
 
@@ -30,16 +30,24 @@ This branch contains **in-progress features** targeting the next integration cyc
 
 ## Features
 
+### Core Pipeline (All Vehicle Teams)
+
 | Component | Status | Description |
 |---|---|---|
-| **Pi 5 MAVProxy Pipeline** | ✅ Operational | UART → MAVProxy → multi-UDP fan-out (`14550`, `14540`, `14601–14607`) |
-| **GCS Translator Daemon** | ✅ Operational | MAVLink → 72-byte `Telemetry` struct → XBee XR 900 MHz RF transmission |
+| **Pi 5 MAVProxy Pipeline** | ✅ Operational | UART → MAVProxy → multi-UDP fan-out (`14550`, `14555`, `14540`, `14601–14613`) |
+| **GCS Translator Daemon** | ✅ Operational | MAVLink → `Telemetry` struct → XBee XR 900 MHz RF transmission |
 | **GCS Infrastructure API** | ✅ Operational | `gcs-infrastructure` registered as git submodule; `LaunchVehicleXBee`, `SendTelemetry`, `ReceiveCommand(DecodeFormat.Class)` |
 | **GCS Command Handling** | ✅ Operational | `Heartbeat`, `EmergencyStop` (→ MAVLink flight termination); `AddZone` and `PatientLocation` logged, MAVLink actions pending |
+| **Vehicle Telemetry Monitor** | ✅ Operational | `xbee_telemetry_monitor.py` — diagnostic GCS-side receiver, stand-in for `GCSTest.py` |
+| **GCS Laptop MAVProxy Router** | ✅ Operational | Auto-detects XBee XR COM port, fans out MAVLink to QGC and downstream consumers |
+
+### MRA-Only (RF Search & Triangulation)
+
+| Component | Status | Description |
+|---|---|---|
 | **Kraken Triangulator** | ✅ Operational | Web-based RF triangulation dashboard with LS-AoA, Bayesian grid, and spatial filtering |
 | **Kraken → Telemetry Injection** | ✅ Operational | `DEBUG_VECT KRAKEN_TGT` intercept feeds triangulation result into `Telemetry.MessageLat/Lon` |
-| **Vehicle Telemetry Monitor** | ✅ Operational | `xbee_telemetry_monitor.py` — diagnostic GCS-side receiver, stand-in for `GCSTest.py` |
-| **GCS Laptop MAVProxy Router** | ✅ Operational | Auto-detects XBee XR COM port, fans out MAVLink to QGC, Kraken, and Software Team |
+| **`telemetry_injector.py`** | ✅ Operational | GCS-side tool for injecting search areas, ERU patient coords, and MRA target locations via MAVProxy |
 
 ---
 
@@ -107,6 +115,19 @@ git submodule update --init --recursive
 
 ### On the Raspberry Pi 5 (Airborne)
 
+**Automated Setup (Recommended):**
+
+For a fresh Pi 5 (new SD card), the provisioning script handles everything end-to-end:
+```bash
+git clone https://github.com/ngcp-project/ngcp-pixhawk-pi5-companion.git ~/work/ngcp-pixhawk-pi5-companion
+cd ~/work/ngcp-pixhawk-pi5-companion
+git checkout ChadFeatureRequest
+./scripts/setup-pi5.sh
+```
+This installs all system packages, configures UART, installs MAVProxy via pipx, sets up GCS library editable installs, configures GNOME autostart, and runs a smoke test. See `scripts/setup-pi5.sh` for details.
+
+**Manual Setup:**
+
 1. Clone the repo and initialise submodules:
    ```bash
    git clone https://github.com/ngcp-project/ngcp-pixhawk-pi5-companion.git
@@ -119,6 +140,24 @@ git submodule update --init --recursive
    ./scripts/install-mavproxy-autostart.sh
    ```
 4. Reboot. MAVProxy will auto-start, detect the vehicle on `/dev/ttyAMA0`, and `gcs_translator.py` will begin streaming telemetry to the GCS.
+
+> ⚠️ **Headless / SSH-only Pi?** The autostart mechanism uses an XDG `.desktop` entry, which only fires when a **graphical desktop session** (e.g. GNOME) starts. If your Pi boots to CLI or you only access it over SSH, the services will **not** auto-start. Use the manual launch method below instead.
+
+**Manual Launch (no autostart / headless):**
+
+If autostart is not available or fails, run the telemetry stack directly:
+```bash
+# Verify your Pixhawk UART device exists
+ls -la /dev/ttyAMA0 /dev/ttyUSB* /dev/ttyACM* 2>/dev/null
+
+# If your UART device is NOT /dev/ttyAMA0, override it:
+export MAVPROXY_MASTER=/dev/ttyUSB0   # adjust to your device
+
+# Launch the full stack (MAVProxy + gcs_translator + gui_server)
+./scripts/ngcp-mavproxy-telemetry.sh
+```
+
+> **Note:** `ngcp-mavproxy-telemetry.sh` has a hardcoded `REPO_ROOT` path. If your Pi username or clone path differs from the default, edit line 10 of the script to match your setup.
 
 ### On the GCS Laptop (Ground)
 
@@ -144,9 +183,12 @@ ngcp-pixhawk-pi5-companion/
 ├── gcs-infrastructure/             ← GCS Subteam library (git submodule, read-only)
 │
 ├── scripts/                        ← Pi 5 flight-side daemons
-│   ├── gcs_translator.py           ← Main pipeline: MAVLink → Telemetry → XBee (Pi 5)
-│   ├── xbee_telemetry_monitor.py   ← Diagnostic GCS-side receiver (laptop, stand-in for GCSTest.py)
-│   ├── gui_server.py               ← Web-based telemetry state server (Pi 5)
+│   ├── gcs_translator.py           ← Core: MAVLink → Telemetry → XBee (Pi 5)
+│   ├── xbee_telemetry_monitor.py   ← Core: Diagnostic GCS-side receiver (laptop)
+│   ├── gui_server.py               ← Core: Web-based telemetry state server (Pi 5)
+│   ├── telemetry_injector.py       ← MRA-Only: Inject search areas / targets via MAVProxy
+│   ├── mavlink_hub.py              ← Core: MAVLink message router utility
+│   ├── setup-pi5.sh                ← One-command provisioning for fresh Pi 5 SD cards
 │   ├── install-mavproxy-autostart.sh
 │   ├── ngcp-mavproxy-autostart.sh
 │   └── ngcp-mavproxy-telemetry.sh
@@ -156,7 +198,8 @@ ngcp-pixhawk-pi5-companion/
 │   ├── launch_gcs_router.py        ← COM port auto-detect + MAVProxy fan-out
 │   └── README.md
 │
-├── kraken-triangulator/            ← RF triangulation app (separate submodule)
+├── kraken-triangulator/            ← MRA-Only: RF triangulation app (Kraken dashboard)
+│   └── server/kraken_server.py     ← MRA-Only: Kraken backend + ERU endpoint
 ├── web/                            ← Pi 5 web dashboard (GCS view)
 ├── docs/                           ← SOPs and architecture documentation
 │   └── wiki/
@@ -168,6 +211,7 @@ ngcp-pixhawk-pi5-companion/
 
 ## Status
 
+**Core Pipeline:**
 - ✅ UART device mapping confirmed on Pi 5 (`/dev/ttyAMA0`)
 - ✅ MAVLink frames verified on TELEM2
 - ✅ MAVProxy receives heartbeat + parameters
@@ -176,6 +220,8 @@ ngcp-pixhawk-pi5-companion/
 - ✅ `ReceiveCommand(DecodeFormat.Class)` API compliance verified
 - ✅ GCS Laptop MAVProxy Router verified with XBee XR on COM5
 - ✅ QGroundControl confirmed receiving live telemetry through the router
+
+**MRA-Only (RF Search):**
 - ✅ Kraken Triangulator: LS-AoA, Bayesian Grid, spatial/temporal filtering operational
 - ✅ Kraken target coordinates injecting into `Telemetry.MessageLat/Lon` over XBee
 

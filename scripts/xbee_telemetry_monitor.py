@@ -114,6 +114,8 @@ def get_xbee_port():
       1. CLI argument  (e.g. python xbee_telemetry_monitor.py COM7)
       2. Auto-detect   — scans serial ports for an FTDI device (VID 0x0403),
                          which is the USB chip used by XBee modules.
+                         Probes each candidate to skip ports already in use
+                         (e.g. RFD-900 held by MAVProxy on COM13).
       3. Fallback      — COM5 with a warning if nothing is found.
 
     Requires pyserial: pip install pyserial
@@ -124,6 +126,7 @@ def get_xbee_port():
 
     # 2. Auto-detect via pyserial
     try:
+        import serial
         import serial.tools.list_ports
         FTDI_VID = 0x0403   # XBee USB adapter (FTDI chip)
         candidates = [
@@ -131,13 +134,21 @@ def get_xbee_port():
             if p.vid == FTDI_VID
         ]
         if candidates:
-            port = candidates[0].device
-            desc = candidates[0].description
-            print(f"[*] Auto-detected XBee: {port}  ({desc})")
-            if len(candidates) > 1:
-                others = ", ".join(p.device for p in candidates[1:])
-                print(f"    (other FTDI ports found: {others} — pass one as CLI arg to override)")
-            return port
+            all_ports = ", ".join(f"{p.device} ({p.description})" for p in candidates)
+            print(f"[*] Found {len(candidates)} FTDI device(s): {all_ports}")
+
+            # Probe each candidate — pick the first one that isn't locked
+            for p in candidates:
+                try:
+                    probe = serial.Serial(p.device, baudrate=115200, timeout=0.1)
+                    probe.close()
+                    print(f"[*] Selected XBee: {p.device}  ({p.description})")
+                    return p.device
+                except (serial.SerialException, PermissionError):
+                    print(f"    [!] {p.device} is busy/locked — skipping")
+                    continue
+
+            print("[!] All FTDI ports are busy. Is another program using the XBee?")
         else:
             print("[!] No FTDI device found — is the XBee plugged in?")
     except ImportError:
@@ -146,6 +157,7 @@ def get_xbee_port():
     # 3. Fallback
     print("[!] Falling back to COM5. Pass the correct port as a CLI argument if this fails.")
     return "COM5"
+
 
 
 def main():
