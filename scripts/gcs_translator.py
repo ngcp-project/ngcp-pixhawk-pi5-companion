@@ -11,6 +11,7 @@ import logging
 import json
 import struct
 import os
+import tempfile
 try:
     from pymavlink import mavutil
 except ImportError:
@@ -201,6 +202,8 @@ def main():
                     telemetry._mra_refined_lon = float(msg.y)
                     telemetry._mra_refined_spread = float(msg.z)
                     telemetry._mra_refined_mtime = time.time()
+                    telemetry._mra_refined_seq = getattr(telemetry, '_mra_refined_seq', 0) + 1
+                    telemetry._mra_refined_msg_id = f"kraken_mra_refined_{telemetry._mra_refined_seq}_{telemetry._mra_refined_mtime}"
                     logger.info(f"MRA Phase 1 (Refined Loiter) received via RFD-900x: ({msg.x}, {msg.y})")
                 elif msg_name == 'MRA_FINAL':
                     # Phase 2 — Final Estimated Location
@@ -212,6 +215,8 @@ def main():
                     telemetry.MessageLat = float(msg.x)
                     telemetry.MessageLon = float(msg.y)
                     telemetry._last_target_mtime = time.time()
+                    telemetry._mra_final_seq = getattr(telemetry, '_mra_final_seq', 0) + 1
+                    telemetry._mra_final_msg_id = f"kraken_mra_final_{telemetry._mra_final_seq}_{telemetry._mra_final_mtime}"
                     logger.info(f"MRA Phase 2 (Final Estimate) received via RFD-900x: ({msg.x}, {msg.y})")
                 elif msg_name == 'KRAKEN_TGT':
                     # Legacy fallback — treat as Phase 2 for backwards compatibility
@@ -222,12 +227,16 @@ def main():
                     telemetry.MessageLat = float(msg.x)
                     telemetry.MessageLon = float(msg.y)
                     telemetry._last_target_mtime = time.time()
+                    telemetry._mra_final_seq = getattr(telemetry, '_mra_final_seq', 0) + 1
+                    telemetry._mra_final_msg_id = f"kraken_tgt_{telemetry._mra_final_seq}_{telemetry._mra_final_mtime}"
                     logger.info(f"Legacy KRAKEN_TGT received via RFD-900x: ({msg.x}, {msg.y})")
                 elif msg_name == 'ERU_TGT':
                     # ERU patient location injected from MRA laptop
                     telemetry._eru_lat = float(msg.x)
                     telemetry._eru_lon = float(msg.y)
                     telemetry._eru_received_at = time.time()
+                    telemetry._eru_seq = getattr(telemetry, '_eru_seq', 0) + 1
+                    telemetry._eru_msg_id = f"mra_eru_{telemetry._eru_seq}_{telemetry._eru_received_at}"
                     logger.info(f"ERU_TGT received via RFD-900x: ({msg.x}, {msg.y})")
                 elif msg_name == 'SA_VERT':
                     # Search area vertex from telemetry_injector.py
@@ -337,6 +346,8 @@ def main():
                             telemetry._eru_lat = float(eru_lat)
                             telemetry._eru_lon = float(eru_lon)
                             telemetry._eru_received_at = time.time()
+                            telemetry._eru_seq = getattr(telemetry, '_eru_seq', 0) + 1
+                            telemetry._eru_msg_id = f"gcs_eru_{telemetry._eru_seq}_{telemetry._eru_received_at}"
                             logger.info(f'PatientLocation received from GCS/ERU: ({eru_lat}, {eru_lon})')
 
                             # Forward ERU coordinates to MRA Laptop via RFD-900x.
@@ -417,22 +428,34 @@ def main():
                     "mra_refined_lat": getattr(telemetry, '_mra_refined_lat', 0.0),
                     "mra_refined_lon": getattr(telemetry, '_mra_refined_lon', 0.0),
                     "mra_refined_confidence": getattr(telemetry, '_mra_refined_spread', None),
-                    "mra_refined_fix_id": "mra_refined_001" if getattr(telemetry, '_mra_refined_mtime', 0) > 0 else None,
+                    "mra_refined_fix_id": f"mra_refined_{getattr(telemetry, '_mra_refined_seq', '001')}" if getattr(telemetry, '_mra_refined_mtime', 0) > 0 else None,
+                    "mra_refined_msg_id": getattr(telemetry, '_mra_refined_msg_id', None),
+                    "mra_refined_seq": getattr(telemetry, '_mra_refined_seq', None),
                     # MRA Phase 2 — Final Estimated Location (sent to GCS)
                     "mra_final_lat": getattr(telemetry, '_mra_final_lat', 0.0),
                     "mra_final_lon": getattr(telemetry, '_mra_final_lon', 0.0),
                     "mra_final_confidence": getattr(telemetry, '_mra_final_spread', None),
-                    "mra_final_fix_id": "mra_final_001" if getattr(telemetry, '_mra_final_mtime', 0) > 0 else None,
+                    "mra_final_fix_id": f"mra_final_{getattr(telemetry, '_mra_final_seq', '001')}" if getattr(telemetry, '_mra_final_mtime', 0) > 0 else None,
+                    "mra_final_msg_id": getattr(telemetry, '_mra_final_msg_id', None),
+                    "mra_final_seq": getattr(telemetry, '_mra_final_seq', None),
                     # ERU Patient Location (from GCS PatientLocation command)
                     "eru_lat": getattr(telemetry, '_eru_lat', 0.0),
                     "eru_lon": getattr(telemetry, '_eru_lon', 0.0),
                     "eru_received_at": getattr(telemetry, '_eru_received_at', 0),
-                    "eru_fix_id": "eru_001" if getattr(telemetry, '_eru_received_at', 0) > 0 else None,
+                    "eru_fix_id": f"eru_{getattr(telemetry, '_eru_seq', '001')}" if getattr(telemetry, '_eru_received_at', 0) > 0 else None,
+                    "eru_msg_id": getattr(telemetry, '_eru_msg_id', None),
+                    "eru_seq": getattr(telemetry, '_eru_seq', None),
                     # Search area zones from GCS AddZone commands
                     "zones": getattr(telemetry, '_zones', []),
                 }
-                with open('/tmp/telemetry.json', 'w') as f:
+                
+                temp_dir = '/tmp'
+                fd, tmp_path = tempfile.mkstemp(dir=temp_dir, prefix='telemetry_', suffix='.json')
+                with os.fdopen(fd, 'w') as f:
                     json.dump(state_dump, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, '/tmp/telemetry.json')
             except Exception as json_e:
                 logger.error(f"Failed to write state JSON: {json_e}")
 

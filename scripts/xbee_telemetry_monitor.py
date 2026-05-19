@@ -2,6 +2,7 @@ import sys
 import os
 import time
 import json
+import tempfile
 
 # Ensure UTF-8 output regardless of terminal encoding (fixes UnicodeEncodeError
 # on Windows PowerShell sessions running CP1252 by default).
@@ -210,8 +211,12 @@ def main():
                         "last_updated":   telemetry.LastUpdated,
                     }
                     temp_dir = os.environ.get('TEMP', 'C:\\Temp')
-                    with open(os.path.join(temp_dir, 'telemetry.json'), 'w') as f:
+                    fd, tmp_path = tempfile.mkstemp(dir=temp_dir, prefix='telemetry_', suffix='.json')
+                    with os.fdopen(fd, 'w') as f:
                         json.dump(state_dump, f, indent=2)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(tmp_path, os.path.join(temp_dir, 'telemetry.json'))
                 except Exception:
                     pass   # silently skip GUI file dump on error
 
