@@ -250,12 +250,73 @@ def main():
                             # cmd_obj.Coordinates contain the zone data.
                             # Wire up MAV_CMD_DO_FENCE_ENABLE or upload via
                             # MISSION_ITEM_INT with MAV_MISSION_TYPE_FENCE.
-                            logger.info(f'AddZone received (not yet implemented): {cmd_obj}')
+
+                             # Translate AddZone into MAVLink fence mission items.
+                            # - Use polygon fence vertices for KeepIn / SearchArea.
+                            # - Use exclusion polygon vertices for KeepOut.
+                            # - Enable the fence after upload.
+                            try:
+                                Coordinates = getattr(cmd_obj, 'Coordinates', None)
+                                Zone = getattr(cmd_obj, 'Zone', None)
+                                if not Coordinates or len(Coordinates) < 3:
+                                    raise ValueError('AddZone command requires at least 3 coordinates')
+
+                                logger.info(
+                                    f'AddZone zone type: {getattr(Zone, "name", Zone)}; '
+                                    f'{len(Coordinates)} coordinates received: {Coordinates}'
+                                )
+
+                                keep_in_cmd = getattr(mavutil.mavlink, 'MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION', 209)
+                                keep_out_cmd = getattr(mavutil.mavlink, 'MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION', 210)
+                                frame = getattr(mavutil.mavlink, 'MAV_FRAME_GLOBAL_RELATIVE_ALT_INT', 6)
+                                mission_type = getattr(mavutil.mavlink, 'MAV_MISSION_TYPE_FENCE', 1)
+
+                                if getattr(Zone, 'name', None) == 'KeepOut' or getattr(Zone, 'value', None) == 1:
+                                    fence_cmd = keep_out_cmd
+                                else:
+                                    fence_cmd = keep_in_cmd
+
+                                logger.info(f'Sending AddZone fence mission ({len(Coordinates)} points) with command {fence_cmd}')
+
+                                for seq, coord in enumerate(Coordinates):
+                                    lat = float(coord[0])
+                                    lon = float(coord[1])
+                                    mav_connection.mav.mission_item_int_send(
+                                        mav_connection.target_system,
+                                        mav_connection.target_component,
+                                        seq,
+                                        frame,
+                                        fence_cmd,
+                                        0, 1,
+                                        0, 0, 0, 0,
+                                        int(lat * 1e7),
+                                        int(lon * 1e7),
+                                        0,
+                                        mission_type
+                                    )
+
+                                mav_connection.mav.command_long_send(
+                                    mav_connection.target_system,
+                                    mav_connection.target_component,
+                                    getattr(mavutil.mavlink, 'MAV_CMD_DO_FENCE_ENABLE', 207),
+                                    0,
+                                    1.0, 0, 0, 0, 0, 0, 0
+                                )
+                                logger.info('AddZone translated to MAVLink fence upload and enabled.')
+                            except Exception as mav_exc:
+                                logger.error(f'Failed to translate AddZone to MAVLink: {mav_exc}')
+
+                            logger.info(f'AddZone received: {cmd_obj}')
+
+                            
                         case _ if cmd_name == 'PatientLocation':
-                            # TODO: GCS-pushed patient coordinate. cmd_obj.Coordinate
-                            # contains the (lat, lon) tuple. Forward to autopilot
-                            # or store for Kraken overlay.
-                            logger.info(f'PatientLocation received (not yet implemented): {cmd_obj}')
+                            # GCS-pushed patient coordinate. Store in telemetry for transmission to GCS.
+                            lat, lon = cmd_obj.Coordinates
+                            telemetry.MessageLat = lat
+                            telemetry.MessageLon = lon
+                            telemetry.MessageFlag = 2  # 2 = Patient per GCS Telemetry spec
+                            telemetry._last_target_mtime = time.time()  # Set timestamp like Kraken
+                            logger.info(f'Patient location set from GCS: ({lat}, {lon})')
                         case _:
                             logger.warning(f'Unrecognised command type — no action taken: {cmd_name}')
         except Exception as e:
